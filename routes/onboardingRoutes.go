@@ -19,7 +19,6 @@ func onboardingRoutes(rg *gin.RouterGroup) {
 		onboarding.POST("/email", controller.AddEmail)
 		onboarding.POST("/address", controller.AddAddress)
 		onboarding.POST("/bank", controller.AddBankAccount)
-		onboarding.POST("/bank/verify", controller.VerifyBankAccount)
 		onboarding.POST("/nominee", controller.AddNominee)
 		onboarding.POST("/activate", controller.ActivateAccount)
 	}

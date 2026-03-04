@@ -113,17 +113,29 @@ func KYCCheck(uid string, req structs.KYCCheckRequest) (*entity.PreVerificationU
 }
 
 func CreateInvestorProfile(uid string, req structs.InvestorProfileRequest) (string, error) {
+	user, err := repository.GetSureUserByUID(uid)
+	if err != nil {
+		return "", fmt.Errorf("failed to load user: %w", err)
+	}
+
 	fpResp, err := FPCreateInvestorProfile(structs.FPInvestorProfileRequest{
-		PAN:            req.PAN,
-		Name:           req.Name,
-		Gender:         req.Gender,
-		DateOfBirth:    req.DateOfBirth,
-		CountryOfBirth: "IN",
-		Occupation:     req.Occupation,
-		Income:         req.IncomeSlab,
-		PEP:            req.PEP,
-		TaxStatus:      "resident_individual",
-		FATCA:          []structs.FPFATCADetail{{TaxResidency: "IN"}},
+		Type:                    "individual",
+		TaxStatus:               "resident_individual",
+		Name:                    user.Name,
+		DateOfBirth:             user.DOB.Format("2006-01-02"),
+		Gender:                  normGender(user.Gender),
+		Occupation:              req.Occupation,
+		PAN:                     user.PAN,
+		PlaceOfBirth:            "IN",
+		UseDefaultTaxResidences: "false",
+		FirstTaxResidency: structs.FPTaxResidency{
+			Country:     "IN",
+			TaxIDType:   "pan",
+			TaxIDNumber: user.PAN,
+		},
+		SourceOfWealth: req.SourceOfWealth,
+		IncomeSlab:     req.IncomeSlab,
+		PEPDetails:     "not_applicable",
 	})
 	if err != nil {
 		return "", err
@@ -137,15 +149,15 @@ func CreateInvestorProfile(uid string, req structs.InvestorProfileRequest) (stri
 	return fpResp.ID, nil
 }
 
-func AddPhone(uid, investorID string, req structs.PhoneRequest) (string, error) {
-	belongsTo := req.BelongsTo
-	if belongsTo == "" {
-		belongsTo = "self"
+func AddPhone(uid, investorID string) (string, error) {
+	user, err := repository.GetSureUserByUID(uid)
+	if err != nil {
+		return "", fmt.Errorf("failed to load user: %w", err)
 	}
 	fpResp, err := FPAddPhone(structs.FPPhoneRequest{
 		InvestorProfileID: investorID,
-		Number:            req.Number,
-		BelongsTo:         belongsTo,
+		ISD:               "91",
+		Number:            user.PhoneNumber,
 	})
 	if err != nil {
 		return "", err
@@ -156,15 +168,14 @@ func AddPhone(uid, investorID string, req structs.PhoneRequest) (string, error) 
 	return fpResp.ID, nil
 }
 
-func AddEmail(uid, investorID string, req structs.EmailRequest) (string, error) {
-	belongsTo := req.BelongsTo
-	if belongsTo == "" {
-		belongsTo = "self"
+func AddEmail(uid, investorID string) (string, error) {
+	user, err := repository.GetSureUserByUID(uid)
+	if err != nil {
+		return "", fmt.Errorf("failed to load user: %w", err)
 	}
 	fpResp, err := FPAddEmail(structs.FPEmailRequest{
 		InvestorProfileID: investorID,
-		Email:             req.Email,
-		BelongsTo:         belongsTo,
+		Email:             user.Email,
 	})
 	if err != nil {
 		return "", err
@@ -180,9 +191,9 @@ func AddAddress(uid, investorID string, req structs.AddressRequest) (string, err
 	if country == "" {
 		country = "IN"
 	}
-	addrType := req.AddressType
-	if addrType == "" {
-		addrType = "residential"
+	nature := req.Nature
+	if nature == "" {
+		nature = "residential"
 	}
 	fpResp, err := FPAddAddress(structs.FPAddressRequest{
 		InvestorProfileID: investorID,
@@ -190,9 +201,9 @@ func AddAddress(uid, investorID string, req structs.AddressRequest) (string, err
 		Line2:             req.Line2,
 		City:              req.City,
 		State:             req.State,
-		Pincode:           req.Pincode,
+		PostalCode:        req.Pincode,
 		Country:           country,
-		AddressType:       addrType,
+		Nature:            nature,
 	})
 	if err != nil {
 		return "", err
@@ -203,42 +214,36 @@ func AddAddress(uid, investorID string, req structs.AddressRequest) (string, err
 	return fpResp.ID, nil
 }
 
-func AddBankAccount(uid, investorID string, req structs.BankAccountRequest) (string, error) {
-	acType := req.AccountType
-	if acType == "" {
-		acType = "savings"
-	}
-	fpResp, err := FPAddBankAccount(structs.FPBankAccountRequest{
-		InvestorProfileID: investorID,
-		AccountNumber:     req.AccountNumber,
-		IFSC:              req.IFSC,
-		AccountType:       acType,
-	})
-	if err != nil {
-		return "", err
-	}
-	if err := saveUserFPFields(uid, map[string]interface{}{
-		"fp_bank_account_id": fpResp.ID,
-		"onboarding_step":    2,
-	}); err != nil {
-		return "", err
-	}
-	return fpResp.ID, nil
-}
-
-func VerifyBankAccount(uid string, req structs.BankVerifyRequest) (*structs.FPPreVerification, error) {
+// AddBankAccount verifies the bank account via POA penny drop first.
+// On success it registers the account with FP tenant and saves to Firestore.
+// Firestore is NOT updated if verification fails.
+func AddBankAccount(uid, investorID string, req structs.BankAccountRequest) (string, string, error) {
 	user, err := repository.GetSureUserByUID(uid)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load user: %w", err)
+		return "", "", fmt.Errorf("failed to load user: %w", err)
 	}
 	if user.PAN == "" {
-		return nil, fmt.Errorf("PAN not found for user — update your profile first")
+		return "", "", fmt.Errorf("PAN not found for user")
 	}
 
 	acType := req.AccountType
 	if acType == "" {
 		acType = "savings"
 	}
+
+	// Step 1: Create FP bank account
+	fpBank, err := FPAddBankAccount(structs.FPBankAccountRequest{
+		Profile:                  investorID,
+		PrimaryAccountHolderName: user.Name,
+		AccountNumber:            req.AccountNumber,
+		Type:                     acType,
+		IFSCCode:                 req.IFSC,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("failed to register bank account: %w", err)
+	}
+
+	// Step 2: POA penny drop verification
 	fpPV, err := POACreatePreVerification(structs.FPPreVerificationRequest{
 		InvestorIdentifier: user.PAN,
 		PAN:                &structs.FPPreVerifField{Value: user.PAN},
@@ -247,7 +252,7 @@ func VerifyBankAccount(uid string, req structs.BankVerifyRequest) (*structs.FPPr
 			{
 				Value: structs.FPPreVerifBankValue{
 					AccountNumber: req.AccountNumber,
-					IFSCCode:      req.IFSCCode,
+					IFSCCode:      req.IFSC,
 					AccountType:   acType,
 				},
 				VerifyManuallyIfRequired: true,
@@ -255,10 +260,9 @@ func VerifyBankAccount(uid string, req structs.BankVerifyRequest) (*structs.FPPr
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("bank verification failed: %w", err)
+		return fpBank.ID, "", fmt.Errorf("bank verification failed: %w", err)
 	}
 
-	// Save initial row with pending status
 	fpID := fpPV.ID
 	pv := &entity.PreVerificationUsage{
 		UUID:                uid,
@@ -266,23 +270,34 @@ func VerifyBankAccount(uid string, req structs.BankVerifyRequest) (*structs.FPPr
 		Pan:                 user.PAN,
 		Status:              "pending",
 		FpPreVerificationID: &fpID,
-		BankIFSC:            strPtr(req.IFSCCode),
+		BankIFSC:            strPtr(req.IFSC),
 		BankAccountNumber:   strPtr(req.AccountNumber),
 		TriggeredBy:         strPtr("bank_verify"),
 	}
 	if err := repository.CreatePreVerification(pv); err != nil {
-		return nil, err
+		return fpBank.ID, "", err
 	}
 
-	// Poll FP for final status (max 5 attempts, 1s interval)
+	// Poll for final status
 	if polled, pollErr := PollPreVerification(fpID, 5); pollErr == nil {
-		fpPV = polled
 		pv.Status = deriveBankVerifStatus(polled)
 		pv.PollCount++
 		_ = repository.UpdatePreVerification(pv)
 	}
 
-	return fpPV, nil
+	if pv.Status != "completed" {
+		return fpID, "", fmt.Errorf("bank verification %s", pv.Status)
+	}
+
+	// Step 3: Save to Firestore only on success
+	if err := saveUserFPFields(uid, map[string]interface{}{
+		"fp_bank_account_id": fpBank.ID,
+		"onboarding_step":    2,
+	}); err != nil {
+		return fpID, "", err
+	}
+
+	return fpID, fpBank.ID, nil
 }
 
 func AddNominee(uid, investorID string, req structs.NomineeRequest) (string, error) {
@@ -332,8 +347,22 @@ func ActivateAccount(uid string, fpData *structs.UserFPData) (string, error) {
 	return fpResp.ID, nil
 }
 
-func GetOnboardingStatus(uid string) (*structs.UserFPData, error) {
-	return GetUserFPData(uid)
+func GetOnboardingStatus(uid string) (*structs.OnboardingStatusResponse, error) {
+	fpData, err := GetUserFPData(uid)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &structs.OnboardingStatusResponse{UserFPData: *fpData}
+
+	if kycPV, err := repository.GetLatestPreVerificationByUUIDAndType(uid, "kyc_verification"); err == nil && kycPV.Status == "pending" && kycPV.FpPreVerificationID != nil {
+		resp.PendingKYCPreVerifID = *kycPV.FpPreVerificationID
+	}
+	if bankPV, err := repository.GetLatestPreVerificationByUUIDAndType(uid, "bank_account_verification"); err == nil && bankPV.Status == "pending" && bankPV.FpPreVerificationID != nil {
+		resp.PendingBankPreVerifID = *bankPV.FpPreVerificationID
+	}
+
+	return resp, nil
 }
 
 // GetPreVerificationStatus fetches latest status from DB + FP and updates the DB row.
@@ -366,4 +395,16 @@ func GetPreVerificationStatus(fpID string) (*entity.PreVerificationUsage, *struc
 
 func strPtr(s string) *string {
 	return &s
+}
+
+// normGender maps Postgres gender values to FP-accepted values: male | female | transgender
+func normGender(g string) string {
+	switch g {
+	case "M", "m", "male":
+		return "male"
+	case "F", "f", "female":
+		return "female"
+	default:
+		return "transgender"
+	}
 }

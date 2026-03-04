@@ -27,56 +27,41 @@ type UserFPData struct {
 	IsActivated           bool   `firestore:"is_activated" json:"is_activated"`
 }
 
+// OnboardingStatusResponse combines Firestore FP data with pending pre-verification IDs from Postgres
+type OnboardingStatusResponse struct {
+	UserFPData
+	PendingKYCPreVerifID  string `json:"pending_kyc_pre_verification_id,omitempty"`
+	PendingBankPreVerifID string `json:"pending_bank_pre_verification_id,omitempty"`
+}
+
 // KYC Check
 type KYCCheckRequest struct {
 	PAN string `json:"pan" binding:"required"`
 }
 
 // Investor Profile
+// pan, name, gender, date_of_birth are auto-fetched from Postgres (sure_user.users)
 type InvestorProfileRequest struct {
-	PAN          string `json:"pan" binding:"required"`
-	Name         string `json:"name" binding:"required"`
-	Gender       string `json:"gender" binding:"required"`
-	DateOfBirth  string `json:"date_of_birth" binding:"required"`
-	Occupation   string `json:"occupation" binding:"required"`
-	IncomeSlab   string `json:"income_slab" binding:"required"`
-	PEP          bool   `json:"pep"`
-	IsIndianResident bool `json:"is_indian_resident"`
-}
-
-// Phone
-type PhoneRequest struct {
-	Number    string `json:"number" binding:"required"`
-	BelongsTo string `json:"belongs_to"`
-}
-
-// Email
-type EmailRequest struct {
-	Email     string `json:"email" binding:"required"`
-	BelongsTo string `json:"belongs_to"`
+	Occupation     string `json:"occupation" binding:"required"`
+	IncomeSlab     string `json:"income_slab" binding:"required"`
+	SourceOfWealth string `json:"source_of_wealth"`
 }
 
 // Address
 type AddressRequest struct {
-	Line1       string `json:"line1" binding:"required"`
-	Line2       string `json:"line2"`
-	City        string `json:"city" binding:"required"`
-	State       string `json:"state" binding:"required"`
-	Pincode     string `json:"pincode" binding:"required"`
-	Country     string `json:"country"`
-	AddressType string `json:"address_type"`
+	Line1   string `json:"line1" binding:"required"`
+	Line2   string `json:"line2"`
+	City    string `json:"city"`
+	State   string `json:"state"`
+	Pincode string `json:"pincode" binding:"required"`
+	Country string `json:"country"`
+	Nature  string `json:"nature"`
 }
 
 // Bank Account
 type BankAccountRequest struct {
 	AccountNumber string `json:"account_number" binding:"required"`
 	IFSC          string `json:"ifsc" binding:"required"`
-	AccountType   string `json:"account_type"`
-}
-
-type BankVerifyRequest struct {
-	AccountNumber string `json:"account_number" binding:"required"`
-	IFSCCode      string `json:"ifsc_code" binding:"required"`
 	AccountType   string `json:"account_type"`
 }
 

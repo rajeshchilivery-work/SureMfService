@@ -77,17 +77,12 @@ func CreateInvestorProfile(c *gin.Context) {
 
 func AddPhone(c *gin.Context) {
 	uid := getUID(c)
-	var req structs.PhoneRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": 400, "msg": err.Error()})
-		return
-	}
 	fpData, err := service.GetUserFPData(uid)
 	if err != nil || fpData.FpInvestorID == "" {
 		c.JSON(http.StatusOK, gin.H{"status": 400, "msg": "investor profile not found"})
 		return
 	}
-	phoneID, err := service.AddPhone(uid, fpData.FpInvestorID, req)
+	phoneID, err := service.AddPhone(uid, fpData.FpInvestorID)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
 		return
@@ -97,17 +92,12 @@ func AddPhone(c *gin.Context) {
 
 func AddEmail(c *gin.Context) {
 	uid := getUID(c)
-	var req structs.EmailRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": 400, "msg": err.Error()})
-		return
-	}
 	fpData, err := service.GetUserFPData(uid)
 	if err != nil || fpData.FpInvestorID == "" {
 		c.JSON(http.StatusOK, gin.H{"status": 400, "msg": "investor profile not found"})
 		return
 	}
-	emailID, err := service.AddEmail(uid, fpData.FpInvestorID, req)
+	emailID, err := service.AddEmail(uid, fpData.FpInvestorID)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
 		return
@@ -147,44 +137,20 @@ func AddBankAccount(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": 400, "msg": "investor profile not found"})
 		return
 	}
-	bankID, err := service.AddBankAccount(uid, fpData.FpInvestorID, req)
+	fpPreVerifID, fpBankAccountID, err := service.AddBankAccount(uid, fpData.FpInvestorID, req)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
+		c.JSON(http.StatusOK, gin.H{
+			"status":                  500,
+			"msg":                     err.Error(),
+			"fp_pre_verification_id":  fpPreVerifID,
+		})
 		return
 	}
-	utils.HandleResponse(c, gin.H{"fp_bank_account_id": bankID}, nil, "MF")
-}
-
-func VerifyBankAccount(c *gin.Context) {
-	uid := getUID(c)
-	var req structs.BankVerifyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": 400, "msg": err.Error()})
-		return
-	}
-	fpPV, err := service.VerifyBankAccount(uid, req)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
-		return
-	}
-
-	status := fpPV.Status
-	result := gin.H{"status": status}
-	if len(fpPV.BankAccounts) > 0 {
-		ba := fpPV.BankAccounts[0]
-		switch ba.Status {
-		case "verified":
-			status = "successful"
-		case "failed":
-			status = "failed"
-		}
-		result = gin.H{
-			"status":         status,
-			"account_number": ba.Value.AccountNumber,
-			"ifsc_code":      ba.Value.IFSCCode,
-		}
-	}
-	utils.HandleResponse(c, result, nil, "MF")
+	utils.HandleResponse(c, gin.H{
+		"fp_bank_account_id":     fpBankAccountID,
+		"fp_pre_verification_id": fpPreVerifID,
+		"verification_status":    "completed",
+	}, nil, "MF")
 }
 
 func AddNominee(c *gin.Context) {

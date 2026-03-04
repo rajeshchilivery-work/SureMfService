@@ -132,9 +132,8 @@ The frontend must include the authenticated user's Firebase UID in the URL. No `
 3. POST /sure-mf/:uid/onboarding/phone                ← add phone number
 4. POST /sure-mf/:uid/onboarding/email                ← add email
 5. POST /sure-mf/:uid/onboarding/address              ← add address
-6. POST /sure-mf/:uid/onboarding/bank                 ← add bank account
-7. POST /sure-mf/:uid/onboarding/bank/verify          ← penny drop verification
-8. POST /sure-mf/:uid/onboarding/nominee              ← add nominee (optional)
+6. POST /sure-mf/:uid/onboarding/bank                 ← penny drop verify + add bank account
+7. POST /sure-mf/:uid/onboarding/nominee              ← add nominee (optional)
 9. POST /sure-mf/:uid/onboarding/activate             ← create MF investment account
 ```
 
@@ -346,17 +345,15 @@ Creates the investor profile in FP. Must be called after KYC.
 **Body:**
 ```json
 {
-  "pan": "ABCDE1234F",
-  "name": "Rajesh Kumar",
-  "gender": "male",
-  "date_of_birth": "1990-05-15",
   "occupation": "business",
-  "income_slab": "greater_than_25_lakhs",
-  "pep": false
+  "income_slab": "above_10lakh_upto_25lakh",
+  "source_of_wealth": "salary"
 }
 ```
 
-**Response:** `{ "fp_investor_id": "mfp_xxx" }`
+`pan`, `name`, `gender`, `date_of_birth` are auto-fetched from `sure_user.users`. `pep_details` is hardcoded to `"not_applicable"`.
+
+**Response:** `{ "fp_investor_id": "invp_xxx" }`
 
 **Saves to Firestore:** `fp_investor_id`, `onboarding_step: 1`
 
@@ -415,7 +412,13 @@ Adds a residential address.
 
 #### `POST /bank`
 
-Registers a bank account with the FP investor profile.
+Creates a bank account in FP tenant, then runs penny-drop verification via FP POA API. Saves to Firestore only if verification succeeds. PAN, name auto-fetched from `sure_user.users`.
+
+**Flow:**
+1. `POST /v2/bank_accounts` → creates `bac_xxx` in FP tenant
+2. `POST /poa/pre_verifications` → starts penny drop, returns `pv_xxx`
+3. Poll `/poa/pre_verifications/{pv_xxx}` until `bank_accounts[0].status = "verified"`
+4. Save `fp_bank_account_id` + `onboarding_step: 2` to Firestore
 
 **Body:**
 ```json
@@ -426,46 +429,32 @@ Registers a bank account with the FP investor profile.
 }
 ```
 
-**Response:** `{ "fp_bank_account_id": "bna_xxx" }`
+> `account_type` defaults to `"savings"` if omitted. Valid values: `savings`, `current`, `nre`, `nro`.
 
-**Saves to Firestore:** `fp_bank_account_id`, `onboarding_step: 2`
-
-> `account_type` defaults to `"savings"` if omitted.
-
----
-
-#### `POST /bank/verify`
-
-Runs penny-drop verification on the bank account. Fetches PAN + name from PostgreSQL automatically.
-
-**Body:**
-```json
-{
-  "account_number": "981234591199",
-  "ifsc_code": "HDFC0001234",
-  "account_type": "savings"
-}
-```
+**Sandbox test accounts** (account_number suffix):
+- `1195–1199` → verified ✓
+- `1600` → failed (low_confidence)
+- `31XX` → failed (bank_verification_failed)
 
 **Response (success):**
 ```json
 {
-  "status": "successful",
-  "account_number": "981234591199",
-  "ifsc_code": "HDFC0001234"
+  "fp_bank_account_id": "bac_xxx",
+  "fp_pre_verification_id": "pv_xxx",
+  "verification_status": "completed"
 }
 ```
 
-**Response (failure):**
+**Response (verification failed):**
 ```json
 {
-  "status": "failed",
-  "account_number": "981234591600",
-  "ifsc_code": "HDFC0001234"
+  "status": 500,
+  "msg": "bank verification failed",
+  "fp_pre_verification_id": "pv_xxx"
 }
 ```
 
-**Data sources:** PAN + name auto-fetched from `sure_user.users`
+**Saves to Firestore:** `fp_bank_account_id`, `onboarding_step: 2`
 
 ---
 
@@ -590,45 +579,67 @@ Confirms an order by submitting the OTP sent via SMS.
 
 ## FP API Integrations
 
-### FP Tenant API (`FP_BASE_URL`)
+### Token Caching
+
+Both FP APIs (Tenant and POA) use OAuth2 client credentials. Tokens are **cached in-process memory** — not fetched on every API call.
+
+**Refresh criteria** (checked before every FP request):
+```
+if cached_token != "" AND now < (token_expiry - 60s)  →  reuse token
+else                                                   →  fetch new token
+```
+
+The 60-second buffer ensures the token is never used right before it expires. On server restart the cache is empty so the first request fetches a fresh token.
+
+Each API has its own independent cache and mutex:
+- `fpAccessToken` / `fpTokenExpiry` — Tenant API token
+- `poaAccessToken` / `poaTokenExpiry` — POA API token
+
+---
+
+### FP Tenant API (`FP_BASE_URL` = `https://s.finprim.com`)
 
 Used for investor profile management and order execution.
 
-| FP Endpoint                                       | Used by                |
-|---------------------------------------------------|------------------------|
-| `POST /api/oms/investor_profiles`                 | CreateInvestorProfile  |
-| `POST /api/oms/phones`                            | AddPhone               |
-| `POST /api/oms/emails`                            | AddEmail               |
-| `POST /api/oms/addresses`                         | AddAddress             |
-| `POST /api/oms/bank_accounts`                     | AddBankAccount         |
-| `POST /api/oms/related_parties`                   | AddNominee             |
-| `POST /api/oms/mf_investment_accounts`            | ActivateAccount        |
-| `GET  /api/oms/fund_schemes`                      | ListFunds              |
-| `POST /api/oms/purchase_orders`                   | PlacePurchaseOrder     |
-| `POST /api/oms/sip_orders`                        | PlaceSIPOrder          |
-| `POST /api/oms/redemption_orders`                 | PlaceRedemptionOrder   |
-| `POST /api/oms/purchase_orders/:id/submit`        | ConfirmOTP             |
+| FP Endpoint                                    | Used by                |
+|------------------------------------------------|------------------------|
+| `POST /v2/investor_profiles`                   | CreateInvestorProfile  |
+| `POST /v2/phone_numbers`                       | AddPhone               |
+| `POST /v2/email_addresses`                     | AddEmail               |
+| `POST /v2/addresses`                           | AddAddress             |
+| `POST /v2/bank_accounts`                       | AddBankAccount         |
+| `POST /v2/related_parties`                     | AddNominee             |
+| `POST /v2/mf_investment_accounts`              | ActivateAccount        |
+| `GET  /api/oms/fund_schemes`                   | ListFunds              |
+| `POST /v2/mf_purchases`                        | PlacePurchaseOrder     |
+| `POST /v2/mf_purchase_plans`                   | PlaceSIPOrder          |
+| `POST /v2/mf_redemptions`                      | PlaceRedemptionOrder   |
+| `POST /v2/mf_purchases/:id/otp`                | ConfirmOTP (purchase)  |
+| `POST /v2/mf_purchase_plans/:id/otp`           | ConfirmOTP (SIP)       |
+| `POST /v2/mf_redemptions/:id/otp`              | ConfirmOTP (redemption)|
 
-**Auth:** OAuth2 client credentials (`grant_type=client_credentials`). Token cached in memory with 60-second safety margin before expiry.
+**Auth endpoint:** `POST {FP_BASE_URL}/v2/auth/{FP_TENANT_ID}/token`
 
-### FP POA API (`FP_POA_BASE_URL`)
+---
+
+### FP POA API (`FP_POA_BASE_URL` = `https://api.sandbox.cybrilla.com`)
 
 Used for async identity verification (KYC) and bank penny-drop.
 
-| FP Endpoint                               | Used by                     |
-|-------------------------------------------|-----------------------------|
-| `POST /poa/pre_verifications`             | KYCCheck, VerifyBankAccount |
-| `GET  /poa/pre_verifications/:id`         | PollPreVerification, GetPreVerificationStatus |
+| FP Endpoint                        | Used by                                        |
+|------------------------------------|------------------------------------------------|
+| `POST /poa/pre_verifications`      | KYCCheck, AddBankAccount                       |
+| `GET  /poa/pre_verifications/:id`  | PollPreVerification, GetPreVerificationStatus  |
 
-**Auth:** OAuth2 client credentials against `FP_POA_AUTH_URL`. Token cached separately from Tenant token.
+**Auth endpoint:** `FP_POA_AUTH_URL` (Keycloak — separate from Tenant auth)
 
 **Status flow:**
 
 ```
-FP Status   → DB Status
-"accepted"  → "pending"    (async processing in progress)
-"completed" → "completed"
-"failed"    → "failed"
+FP Status    → DB Status
+"accepted"   → "pending"    (async processing in progress)
+"completed"  → "completed"
+"failed"     → "failed"
 ```
 
 **Bank verification status resolution** (in priority order):

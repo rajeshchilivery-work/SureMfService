@@ -12,11 +12,11 @@ type FPTokenResponse struct {
 
 // Request: POST /poa/pre_verifications
 type FPPreVerificationRequest struct {
-	InvestorIdentifier string                      `json:"investor_identifier,omitempty"`
-	PAN                *FPPreVerifField             `json:"pan,omitempty"`
-	Name               *FPPreVerifField             `json:"name,omitempty"`
-	DateOfBirth        *FPPreVerifField             `json:"date_of_birth,omitempty"`
-	BankAccounts       []FPPreVerifBankAccountItem  `json:"bank_accounts,omitempty"`
+	InvestorIdentifier string                     `json:"investor_identifier,omitempty"`
+	PAN                *FPPreVerifField            `json:"pan,omitempty"`
+	Name               *FPPreVerifField            `json:"name,omitempty"`
+	DateOfBirth        *FPPreVerifField            `json:"date_of_birth,omitempty"`
+	BankAccounts       []FPPreVerifBankAccountItem `json:"bank_accounts,omitempty"`
 }
 
 type FPPreVerifField struct {
@@ -24,15 +24,14 @@ type FPPreVerifField struct {
 }
 
 type FPPreVerifBankAccountItem struct {
-	Value                  FPPreVerifBankValue `json:"value"`
-	VerifyManuallyIfRequired bool              `json:"verify_manually_if_required,omitempty"`
+	Value                    FPPreVerifBankValue `json:"value"`
+	VerifyManuallyIfRequired bool                `json:"verify_manually_if_required,omitempty"`
 }
 
 type FPPreVerifBankValue struct {
-	AccountNumber   string `json:"account_number"`
-	IFSCCode        string `json:"ifsc_code"`
-	AccountType     string `json:"account_type"`
-	BankAccountProof string `json:"bank_account_proof,omitempty"`
+	AccountNumber string `json:"account_number"`
+	IFSCCode      string `json:"ifsc_code"`
+	AccountType   string `json:"account_type"`
 }
 
 // Response: GET/POST /poa/pre_verifications
@@ -64,20 +63,25 @@ type FPPreVerifBankResult struct {
 // ---- FP Investor Profile ----
 
 type FPInvestorProfileRequest struct {
-	PAN          string           `json:"pan"`
-	Name         string           `json:"name"`
-	Gender       string           `json:"gender"`
-	DateOfBirth  string           `json:"date_of_birth"`
-	CountryOfBirth string         `json:"country_of_birth"`
-	Occupation   string           `json:"occupation"`
-	Income       string           `json:"income"`
-	PEP          bool             `json:"pep"`
-	TaxStatus    string           `json:"tax_status"`
-	FATCA        []FPFATCADetail  `json:"fatca_details"`
+	Type                    string         `json:"type"`
+	TaxStatus               string         `json:"tax_status"`
+	Name                    string         `json:"name"`
+	DateOfBirth             string         `json:"date_of_birth"`
+	Gender                  string         `json:"gender"`
+	Occupation              string         `json:"occupation"`
+	PAN                     string         `json:"pan"`
+	PlaceOfBirth            string         `json:"place_of_birth"`
+	UseDefaultTaxResidences string         `json:"use_default_tax_residences"`
+	FirstTaxResidency       FPTaxResidency `json:"first_tax_residency"`
+	SourceOfWealth          string         `json:"source_of_wealth,omitempty"`
+	IncomeSlab              string         `json:"income_slab"`
+	PEPDetails              string         `json:"pep_details"`
 }
 
-type FPFATCADetail struct {
-	TaxResidency string `json:"tax_residency"`
+type FPTaxResidency struct {
+	Country     string `json:"country"`
+	TaxIDType   string `json:"taxid_type"`
+	TaxIDNumber string `json:"taxid_number"`
 }
 
 type FPInvestorProfileResponse struct {
@@ -91,10 +95,8 @@ type FPInvestorProfileResponse struct {
 
 type FPPhoneRequest struct {
 	InvestorProfileID string `json:"profile"`
+	ISD               string `json:"isd"`
 	Number            string `json:"number"`
-	STDCode           string `json:"std_code,omitempty"`
-	ISD               string `json:"isd,omitempty"`
-	BelongsTo         string `json:"belongs_to"`
 }
 
 type FPPhoneResponse struct {
@@ -107,7 +109,6 @@ type FPPhoneResponse struct {
 type FPEmailRequest struct {
 	InvestorProfileID string `json:"profile"`
 	Email             string `json:"email"`
-	BelongsTo         string `json:"belongs_to"`
 }
 
 type FPEmailResponse struct {
@@ -121,11 +122,12 @@ type FPAddressRequest struct {
 	InvestorProfileID string `json:"profile"`
 	Line1             string `json:"line1"`
 	Line2             string `json:"line2,omitempty"`
-	City              string `json:"city"`
-	State             string `json:"state"`
-	Pincode           string `json:"pincode"`
+	Line3             string `json:"line3,omitempty"`
+	City              string `json:"city,omitempty"`
+	State             string `json:"state,omitempty"`
+	PostalCode        string `json:"postal_code"`
 	Country           string `json:"country"`
-	AddressType       string `json:"address_type"`
+	Nature            string `json:"nature,omitempty"`
 }
 
 type FPAddressResponse struct {
@@ -135,17 +137,18 @@ type FPAddressResponse struct {
 // ---- FP Bank Account ----
 
 type FPBankAccountRequest struct {
-	InvestorProfileID string `json:"profile"`
-	AccountNumber     string `json:"account_number"`
-	IFSC              string `json:"ifsc"`
-	AccountType       string `json:"account_type"`
+	Profile                  string `json:"profile"`
+	PrimaryAccountHolderName string `json:"primary_account_holder_name"`
+	AccountNumber            string `json:"account_number"`
+	Type                     string `json:"type"`
+	IFSCCode                 string `json:"ifsc_code"`
 }
 
 type FPBankAccountResponse struct {
 	ID            string `json:"id"`
 	AccountNumber string `json:"account_number"`
-	IFSC          string `json:"ifsc"`
-	Status        string `json:"status"`
+	IFSCCode      string `json:"ifsc_code"`
+	Type          string `json:"type"`
 }
 
 // ---- FP Related Party (Nominee) ----
