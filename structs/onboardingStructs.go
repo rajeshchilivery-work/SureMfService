@@ -1,5 +1,19 @@
 package structs
 
+// Firestore "users" collection document
+type UserProfile struct {
+	Name   string `firestore:"NAM" json:"name"`
+	Email  string `firestore:"EML" json:"email"`
+	Phone  int64  `firestore:"NUM" json:"phone"`
+	DOB    int64  `firestore:"DOB" json:"dob"`   // epoch ms (negative = pre-1970)
+	Gender string `firestore:"GN" json:"gender"`
+	Status string `firestore:"STS" json:"status"` // "ACTIVE"
+	Stage  int    `firestore:"STG" json:"stage"`
+	APR    bool   `firestore:"APR" json:"apr"`
+	CTS    int64  `firestore:"CTS" json:"cts"`    // created timestamp ms
+	RFC    string `firestore:"RFC" json:"rfc"`    // referral code
+}
+
 // Firestore document for user FP references
 type UserFPData struct {
 	FpInvestorID          string `firestore:"fp_investor_id" json:"fp_investor_id"`
@@ -62,8 +76,8 @@ type BankAccountRequest struct {
 
 type BankVerifyRequest struct {
 	AccountNumber string `json:"account_number" binding:"required"`
-	IFSC          string `json:"ifsc" binding:"required"`
-	PAN           string `json:"pan" binding:"required"`
+	IFSCCode      string `json:"ifsc_code" binding:"required"`
+	AccountType   string `json:"account_type"`
 }
 
 // Nominee

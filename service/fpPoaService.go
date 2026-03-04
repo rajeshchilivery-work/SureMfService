@@ -108,17 +108,18 @@ func POAGetPreVerification(verificationID string) (*structs.FPPreVerification, e
 	return &resp, json.Unmarshal(b, &resp)
 }
 
-// PollPreVerification polls until status is not "pending" (max attempts)
+// PollPreVerification polls until status is "completed" or "failed" (not "accepted"/"pending")
 func PollPreVerification(verificationID string, maxAttempts int) (*structs.FPPreVerification, error) {
 	for i := 0; i < maxAttempts; i++ {
 		pv, err := POAGetPreVerification(verificationID)
 		if err != nil {
 			return nil, err
 		}
-		if pv.Status != "pending" {
+		if pv.Status == "completed" || pv.Status == "failed" {
 			return pv, nil
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(1 * time.Second)
 	}
-	return nil, fmt.Errorf("pre_verification still pending after %d attempts", maxAttempts)
+	// Return last known state even if still in progress
+	return POAGetPreVerification(verificationID)
 }

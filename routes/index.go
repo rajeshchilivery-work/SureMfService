@@ -11,6 +11,9 @@ func Routes(router *gin.Engine) {
 	})
 
 	fundRoutes(base)
-	onboardingRoutes(base)
-	orderRoutes(base)
+
+	// All user-scoped routes are under /:uid/
+	user := base.Group("/:uid")
+	onboardingRoutes(user)
+	orderRoutes(user)
 }

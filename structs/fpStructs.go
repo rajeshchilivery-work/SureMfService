@@ -10,19 +10,55 @@ type FPTokenResponse struct {
 
 // ---- FP Pre-Verification (KYC + Penny Drop) ----
 
+// Request: POST /poa/pre_verifications
 type FPPreVerificationRequest struct {
-	PAN               string `json:"pan"`
-	Type              string `json:"type"` // "kyc_verification" | "bank_account_verification"
-	BankAccountNumber string `json:"bank_account_number,omitempty"`
-	BankIFSC          string `json:"bank_ifsc,omitempty"`
+	InvestorIdentifier string                      `json:"investor_identifier,omitempty"`
+	PAN                *FPPreVerifField             `json:"pan,omitempty"`
+	Name               *FPPreVerifField             `json:"name,omitempty"`
+	DateOfBirth        *FPPreVerifField             `json:"date_of_birth,omitempty"`
+	BankAccounts       []FPPreVerifBankAccountItem  `json:"bank_accounts,omitempty"`
 }
 
+type FPPreVerifField struct {
+	Value string `json:"value"`
+}
+
+type FPPreVerifBankAccountItem struct {
+	Value                  FPPreVerifBankValue `json:"value"`
+	VerifyManuallyIfRequired bool              `json:"verify_manually_if_required,omitempty"`
+}
+
+type FPPreVerifBankValue struct {
+	AccountNumber   string `json:"account_number"`
+	IFSCCode        string `json:"ifsc_code"`
+	AccountType     string `json:"account_type"`
+	BankAccountProof string `json:"bank_account_proof,omitempty"`
+}
+
+// Response: GET/POST /poa/pre_verifications
 type FPPreVerification struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
-	PAN    string `json:"pan"`
-	Type   string `json:"type"`
-	Result string `json:"result,omitempty"`
+	ID                 string                    `json:"id"`
+	Status             string                    `json:"status"` // "accepted" | "completed"
+	InvestorIdentifier string                    `json:"investor_identifier"`
+	Readiness          *FPPreVerifResult         `json:"readiness,omitempty"`
+	PAN                *FPPreVerifResult         `json:"pan,omitempty"`
+	Name               *FPPreVerifResult         `json:"name,omitempty"`
+	DateOfBirth        *FPPreVerifResult         `json:"date_of_birth,omitempty"`
+	BankAccounts       []FPPreVerifBankResult    `json:"bank_accounts,omitempty"`
+}
+
+type FPPreVerifResult struct {
+	Status string `json:"status"` // "verified" | "failed" | "pending"
+	Code   string `json:"code,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	Value  string `json:"value,omitempty"`
+}
+
+type FPPreVerifBankResult struct {
+	Status string              `json:"status"` // "verified" | "failed"
+	Code   string              `json:"code,omitempty"`
+	Reason string              `json:"reason,omitempty"`
+	Value  FPPreVerifBankValue `json:"value"`
 }
 
 // ---- FP Investor Profile ----

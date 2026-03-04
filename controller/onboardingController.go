@@ -14,6 +14,24 @@ func getUID(c *gin.Context) string {
 	return uid.(string)
 }
 
+func GetPreVerificationStatus(c *gin.Context) {
+	fpID := c.Param("fp_id")
+	pv, fpPV, err := service.GetPreVerificationStatus(fpID)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
+		return
+	}
+	utils.HandleResponse(c, gin.H{
+		"fp_pre_verification_id": pv.FpPreVerificationID,
+		"verification_type":      pv.VerificationType,
+		"status":                 pv.Status,
+		"fp_status":              fpPV.Status,
+		"pan":                    fpPV.PAN,
+		"readiness":              fpPV.Readiness,
+		"bank_accounts":          fpPV.BankAccounts,
+	}, nil, "MF")
+}
+
 func GetOnboardingStatus(c *gin.Context) {
 	uid := getUID(c)
 	data, err := service.GetOnboardingStatus(uid)
@@ -31,7 +49,7 @@ func KYCCheck(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": 400, "msg": err.Error()})
 		return
 	}
-	pv, err := service.KYCCheck(uid, req.PAN)
+	pv, err := service.KYCCheck(uid, req)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
 		return
@@ -144,15 +162,29 @@ func VerifyBankAccount(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": 400, "msg": err.Error()})
 		return
 	}
-	pv, err := service.VerifyBankAccount(uid, req.PAN, req)
+	fpPV, err := service.VerifyBankAccount(uid, req)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
 		return
 	}
-	utils.HandleResponse(c, gin.H{
-		"fp_pre_verification_id": pv.FpPreVerificationID,
-		"status":                 pv.Status,
-	}, nil, "MF")
+
+	status := fpPV.Status
+	result := gin.H{"status": status}
+	if len(fpPV.BankAccounts) > 0 {
+		ba := fpPV.BankAccounts[0]
+		switch ba.Status {
+		case "verified":
+			status = "successful"
+		case "failed":
+			status = "failed"
+		}
+		result = gin.H{
+			"status":         status,
+			"account_number": ba.Value.AccountNumber,
+			"ifsc_code":      ba.Value.IFSCCode,
+		}
+	}
+	utils.HandleResponse(c, result, nil, "MF")
 }
 
 func AddNominee(c *gin.Context) {

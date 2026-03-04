@@ -6,9 +6,24 @@ import (
 	"SureMFService/database/firebase"
 	"SureMFService/structs"
 	"fmt"
+	"time"
 )
 
 const userFpCollection = "user_fp_collection"
+const usersCollection = "users"
+
+// GetUserProfile fetches user details from Firestore "users" collection by uid.
+func GetUserProfile(uid string) (*structs.UserProfile, error) {
+	var profile structs.UserProfile
+	found, err := firebase.GetDoc(usersCollection, uid, &profile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch user profile: %w", err)
+	}
+	if !found {
+		return nil, fmt.Errorf("user profile not found for uid: %s", uid)
+	}
+	return &profile, nil
+}
 
 func GetUserFPData(uid string) (*structs.UserFPData, error) {
 	var data structs.UserFPData
@@ -23,27 +38,77 @@ func saveUserFPFields(uid string, fields map[string]interface{}) error {
 	return firebase.SetDocFields(userFpCollection, uid, fields)
 }
 
-func KYCCheck(uid, pan string) (*entity.PreVerificationUsage, error) {
+// epochMsToDate converts epoch milliseconds (can be negative) to "YYYY-MM-DD".
+func epochMsToDate(ms int64) string {
+	return time.UnixMilli(ms).UTC().Format("2006-01-02")
+}
+
+// normalisePreVerifStatus maps FP top-level status to DB-allowed values: pending | completed | failed
+func normalisePreVerifStatus(pv *structs.FPPreVerification) string {
+	switch pv.Status {
+	case "completed":
+		return "completed"
+	case "failed":
+		return "failed"
+	default: // "accepted" or anything else
+		return "pending"
+	}
+}
+
+// deriveBankVerifStatus checks bank_accounts[0].status first, then falls back to readiness.status.
+func deriveBankVerifStatus(pv *structs.FPPreVerification) string {
+	if len(pv.BankAccounts) > 0 {
+		switch pv.BankAccounts[0].Status {
+		case "verified":
+			return "completed"
+		case "failed":
+			return "failed"
+		}
+	}
+	// readiness.status == "failed" also means the account is invalid
+	if pv.Readiness != nil && pv.Readiness.Status == "failed" {
+		return "failed"
+	}
+	return normalisePreVerifStatus(pv)
+}
+
+func KYCCheck(uid string, req structs.KYCCheckRequest) (*entity.PreVerificationUsage, error) {
+	user, err := repository.GetSureUserByUID(uid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load user: %w", err)
+	}
+
 	fpPV, err := POACreatePreVerification(structs.FPPreVerificationRequest{
-		PAN:  pan,
-		Type: "kyc_verification",
+		InvestorIdentifier: req.PAN,
+		PAN:                &structs.FPPreVerifField{Value: req.PAN},
+		Name:               &structs.FPPreVerifField{Value: user.Name},
+		DateOfBirth:        &structs.FPPreVerifField{Value: user.DOB.Format("2006-01-02")},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("kyc pre_verification failed: %w", err)
 	}
 
+	// Save initial row with pending status
 	fpID := fpPV.ID
 	pv := &entity.PreVerificationUsage{
 		UUID:                uid,
 		VerificationType:    "kyc_verification",
-		Pan:                 pan,
-		Status:              fpPV.Status,
+		Pan:                 req.PAN,
+		Status:              "pending",
 		FpPreVerificationID: &fpID,
 		TriggeredBy:         strPtr("kyc_check"),
 	}
 	if err := repository.CreatePreVerification(pv); err != nil {
 		return nil, err
 	}
+
+	// Poll FP for final status (max 5 attempts, 1s interval)
+	if polled, pollErr := PollPreVerification(fpID, 5); pollErr == nil {
+		pv.Status = normalisePreVerifStatus(polled)
+		pv.PollCount++
+		_ = repository.UpdatePreVerification(pv)
+	}
+
 	return pv, nil
 }
 
@@ -161,32 +226,63 @@ func AddBankAccount(uid, investorID string, req structs.BankAccountRequest) (str
 	return fpResp.ID, nil
 }
 
-func VerifyBankAccount(uid, pan string, req structs.BankVerifyRequest) (*entity.PreVerificationUsage, error) {
-	fpPV, err := POACreatePreVerification(structs.FPPreVerificationRequest{
-		PAN:               pan,
-		Type:              "bank_account_verification",
-		BankAccountNumber: req.AccountNumber,
-		BankIFSC:          req.IFSC,
-	})
+func VerifyBankAccount(uid string, req structs.BankVerifyRequest) (*structs.FPPreVerification, error) {
+	user, err := repository.GetSureUserByUID(uid)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to load user: %w", err)
+	}
+	if user.PAN == "" {
+		return nil, fmt.Errorf("PAN not found for user — update your profile first")
 	}
 
+	acType := req.AccountType
+	if acType == "" {
+		acType = "savings"
+	}
+	fpPV, err := POACreatePreVerification(structs.FPPreVerificationRequest{
+		InvestorIdentifier: user.PAN,
+		PAN:                &structs.FPPreVerifField{Value: user.PAN},
+		Name:               &structs.FPPreVerifField{Value: user.Name},
+		BankAccounts: []structs.FPPreVerifBankAccountItem{
+			{
+				Value: structs.FPPreVerifBankValue{
+					AccountNumber: req.AccountNumber,
+					IFSCCode:      req.IFSCCode,
+					AccountType:   acType,
+				},
+				VerifyManuallyIfRequired: true,
+			},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bank verification failed: %w", err)
+	}
+
+	// Save initial row with pending status
 	fpID := fpPV.ID
 	pv := &entity.PreVerificationUsage{
 		UUID:                uid,
 		VerificationType:    "bank_account_verification",
-		Pan:                 pan,
-		Status:              fpPV.Status,
+		Pan:                 user.PAN,
+		Status:              "pending",
 		FpPreVerificationID: &fpID,
-		BankIFSC:            strPtr(req.IFSC),
+		BankIFSC:            strPtr(req.IFSCCode),
 		BankAccountNumber:   strPtr(req.AccountNumber),
 		TriggeredBy:         strPtr("bank_verify"),
 	}
 	if err := repository.CreatePreVerification(pv); err != nil {
 		return nil, err
 	}
-	return pv, nil
+
+	// Poll FP for final status (max 5 attempts, 1s interval)
+	if polled, pollErr := PollPreVerification(fpID, 5); pollErr == nil {
+		fpPV = polled
+		pv.Status = deriveBankVerifStatus(polled)
+		pv.PollCount++
+		_ = repository.UpdatePreVerification(pv)
+	}
+
+	return fpPV, nil
 }
 
 func AddNominee(uid, investorID string, req structs.NomineeRequest) (string, error) {
@@ -238,6 +334,34 @@ func ActivateAccount(uid string, fpData *structs.UserFPData) (string, error) {
 
 func GetOnboardingStatus(uid string) (*structs.UserFPData, error) {
 	return GetUserFPData(uid)
+}
+
+// GetPreVerificationStatus fetches latest status from DB + FP and updates the DB row.
+func GetPreVerificationStatus(fpID string) (*entity.PreVerificationUsage, *structs.FPPreVerification, error) {
+	pv, err := repository.GetPreVerificationByFpID(fpID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pre-verification not found: %w", err)
+	}
+
+	fpPV, err := POAGetPreVerification(fpID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch status from FP: %w", err)
+	}
+
+	// Update DB if status changed
+	var newStatus string
+	if pv.VerificationType == "bank_account_verification" {
+		newStatus = deriveBankVerifStatus(fpPV)
+	} else {
+		newStatus = normalisePreVerifStatus(fpPV)
+	}
+	if newStatus != pv.Status {
+		pv.Status = newStatus
+		pv.PollCount++
+		_ = repository.UpdatePreVerification(pv)
+	}
+
+	return pv, fpPV, nil
 }
 
 func strPtr(s string) *string {

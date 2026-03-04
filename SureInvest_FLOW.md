@@ -206,25 +206,27 @@ State: 'result'
 | Health check | — | `GET /sure-mf/ping` |
 | Display funds | Static `data/funds.ts` | `GET /sure-mf/funds?category=&search=` |
 | Fund schemes | Static data | `GET /sure-mf/funds/:id/schemes` |
-| KYC check | Local state | `POST /sure-mf/onboarding/kyc-check` |
-| Create profile | localStorage | `POST /sure-mf/onboarding/investor-profile` |
-| Add phone | localStorage | `POST /sure-mf/onboarding/phone` |
-| Add email | localStorage | `POST /sure-mf/onboarding/email` |
-| Add address | localStorage | `POST /sure-mf/onboarding/address` |
-| Add bank | localStorage | `POST /sure-mf/onboarding/bank` |
-| Verify bank (penny drop) | UI only | `POST /sure-mf/onboarding/bank/verify` |
-| Add nominee | localStorage | `POST /sure-mf/onboarding/nominee` |
-| Activate account | localStorage | `POST /sure-mf/onboarding/activate` |
-| Onboarding status | localStorage | `GET /sure-mf/onboarding/status` |
-| Place SIP | generateOrderId() | `POST /sure-mf/orders/sip` |
-| Place Lumpsum | generateOrderId() | `POST /sure-mf/orders/purchase` |
-| Confirm OTP | Check === "000000" | `POST /sure-mf/orders/:id/confirm-otp?type=sip` |
-| Get orders | localStorage | `GET /sure-mf/orders` |
-| Place redemption | generateRedemptionId() | `POST /sure-mf/orders/redemption` |
+| KYC check | Local state | `POST /sure-mf/:uid/onboarding/kyc-check` |
+| Create profile | localStorage | `POST /sure-mf/:uid/onboarding/investor-profile` |
+| Add phone | localStorage | `POST /sure-mf/:uid/onboarding/phone` |
+| Add email | localStorage | `POST /sure-mf/:uid/onboarding/email` |
+| Add address | localStorage | `POST /sure-mf/:uid/onboarding/address` |
+| Add bank | localStorage | `POST /sure-mf/:uid/onboarding/bank` |
+| Verify bank (penny drop) | UI only | `POST /sure-mf/:uid/onboarding/bank/verify` |
+| Add nominee | localStorage | `POST /sure-mf/:uid/onboarding/nominee` |
+| Activate account | localStorage | `POST /sure-mf/:uid/onboarding/activate` |
+| Onboarding status | localStorage | `GET /sure-mf/:uid/onboarding/status` |
+| Place SIP | generateOrderId() | `POST /sure-mf/:uid/orders/sip` |
+| Place Lumpsum | generateOrderId() | `POST /sure-mf/:uid/orders/purchase` |
+| Confirm OTP | Check === "000000" | `POST /sure-mf/:uid/orders/:id/confirm-otp?type=sip` |
+| Get orders | localStorage | `GET /sure-mf/:uid/orders` |
+| Place redemption | generateRedemptionId() | `POST /sure-mf/:uid/orders/redemption` |
 
-### Auth Header (all onboarding + order endpoints)
+### Auth (all onboarding + order endpoints)
+UID is passed as a URL path segment — no Authorization header required.
 ```
-Authorization: Bearer <Firebase ID Token>
+/sure-mf/{uid}/onboarding/...
+/sure-mf/{uid}/orders/...
 ```
 
 ---
