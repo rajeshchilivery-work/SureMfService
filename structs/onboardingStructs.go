@@ -67,14 +67,44 @@ type BankAccountRequest struct {
 
 // Nominee
 type NomineeRequest struct {
-	Name              string  `json:"name" binding:"required"`
-	Relation          string  `json:"relation" binding:"required"`
-	DateOfBirth       string  `json:"date_of_birth"`
-	AllocationPercent float64 `json:"allocation_percentage"`
-	IsMajor           bool    `json:"is_major"`
+	Name        string `json:"name" binding:"required"`
+	Relation    string `json:"relation" binding:"required"`
+	DateOfBirth string `json:"date_of_birth"`
+	// Identity fields (adult nominees)
+	PAN                  string              `json:"pan"`
+	EmailAddress         string              `json:"email_address"`
+	AadhaarNumber        string              `json:"aadhaar_number"`
+	PassportNumber       string              `json:"passport_number"`
+	DrivingLicenceNumber string              `json:"driving_licence_number"`
+	PhoneNumber          *NomineePhoneNumber `json:"phone_number"`
+	Address              *NomineeAddress     `json:"address"`
+	// Guardian fields (minor nominees)
+	GuardianName                 string `json:"guardian_name"`
+	GuardianPhoneNumber          string `json:"guardian_phone_number"`
+	GuardianAddress              string `json:"guardian_address"`
+	GuardianEmailAddress         string `json:"guardian_email_address"`
+	GuardianPAN                  string `json:"guardian_pan"`
+	GuardianAadhaarNumber        string `json:"guardian_aadhaar_number"`
+	GuardianPassportNumber       string `json:"guardian_passport_number"`
+	GuardianDrivingLicenceNumber string `json:"guardian_driving_licence_number"`
+}
+
+type NomineePhoneNumber struct {
+	ISD    string `json:"isd"`
+	Number string `json:"number"`
+}
+
+type NomineeAddress struct {
+	Line1      string `json:"line1"`
+	Line2      string `json:"line2"`
+	City       string `json:"city"`
+	State      string `json:"state"`
+	PostalCode string `json:"postal_code"`
+	Country    string `json:"country"`
 }
 
 // Activate
+// Nominee1IdentityProofType: pan | aadhaar | driving_licence | passport
 type ActivateRequest struct {
-	AgreedTnC bool `json:"agreed_tnc" binding:"required"`
+	Nominee1IdentityProofType string `json:"nominee1_identity_proof_type"`
 }

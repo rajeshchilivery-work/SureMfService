@@ -14,9 +14,9 @@ import (
 )
 
 var (
-	fpTokenMu      sync.Mutex
-	fpAccessToken  string
-	fpTokenExpiry  time.Time
+	fpTokenMu     sync.Mutex
+	fpAccessToken string
+	fpTokenExpiry time.Time
 )
 
 func getFPToken() (string, error) {
@@ -193,8 +193,8 @@ func FPCreateMFInvestmentAccount(req structs.FPMFInvestmentAccountRequest) (*str
 	return &resp, json.Unmarshal(b, &resp)
 }
 
-func FPPatchMFInvestmentAccount(accountID string, data map[string]interface{}) error {
-	b, status, err := fpRequest(http.MethodPatch, "/v2/mf_investment_accounts/"+accountID, data)
+func FPPatchMFInvestmentAccount(accountID string, req structs.FPMFInvestmentAccountPatchRequest) error {
+	b, status, err := fpRequest(http.MethodPatch, "/v2/mf_investment_accounts", req)
 	if err != nil {
 		return err
 	}

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const userFpCollection = "user_fp_collection"
+const userFpCollection = "user_fp_mapping"
 const usersCollection = "users"
 
 // GetUserProfile fetches user details from Firestore "users" collection by uid.
@@ -43,10 +43,14 @@ func epochMsToDate(ms int64) string {
 	return time.UnixMilli(ms).UTC().Format("2006-01-02")
 }
 
-// normalisePreVerifStatus maps FP top-level status to DB-allowed values: pending | completed | failed
+// normalisePreVerifStatus maps FP status to DB-allowed values: pending | completed | failed.
+// For KYC checks, readiness.status determines actual compliance even when top-level status is "completed".
 func normalisePreVerifStatus(pv *structs.FPPreVerification) string {
 	switch pv.Status {
 	case "completed":
+		if pv.Readiness != nil && pv.Readiness.Status == "failed" {
+			return "failed"
+		}
 		return "completed"
 	case "failed":
 		return "failed"
@@ -301,14 +305,42 @@ func AddBankAccount(uid, investorID string, req structs.BankAccountRequest) (str
 }
 
 func AddNominee(uid, investorID string, req structs.NomineeRequest) (string, error) {
-	fpResp, err := FPAddNominee(structs.FPNomineeRequest{
-		InvestorProfileID: investorID,
-		Name:              req.Name,
-		Relation:          req.Relation,
-		DateOfBirth:       req.DateOfBirth,
-		AllocationPercent: req.AllocationPercent,
-		IsMajor:           req.IsMajor,
-	})
+	fpReq := structs.FPNomineeRequest{
+		InvestorProfileID:            investorID,
+		Name:                         req.Name,
+		Relationship:                 req.Relation,
+		DateOfBirth:                  req.DateOfBirth,
+		PAN:                          req.PAN,
+		EmailAddress:                 req.EmailAddress,
+		AadhaarNumber:                req.AadhaarNumber,
+		PassportNumber:               req.PassportNumber,
+		DrivingLicenceNumber:         req.DrivingLicenceNumber,
+		GuardianName:                 req.GuardianName,
+		GuardianPhoneNumber:          req.GuardianPhoneNumber,
+		GuardianAddress:              req.GuardianAddress,
+		GuardianEmailAddress:         req.GuardianEmailAddress,
+		GuardianPAN:                  req.GuardianPAN,
+		GuardianAadhaarNumber:        req.GuardianAadhaarNumber,
+		GuardianPassportNumber:       req.GuardianPassportNumber,
+		GuardianDrivingLicenceNumber: req.GuardianDrivingLicenceNumber,
+	}
+	if req.PhoneNumber != nil {
+		fpReq.PhoneNumber = &structs.FPNomineePhone{
+			ISD:    req.PhoneNumber.ISD,
+			Number: req.PhoneNumber.Number,
+		}
+	}
+	if req.Address != nil {
+		fpReq.Address = &structs.FPNomineeAddr{
+			Line1:      req.Address.Line1,
+			Line2:      req.Address.Line2,
+			City:       req.Address.City,
+			State:      req.Address.State,
+			PostalCode: req.Address.PostalCode,
+			Country:    req.Address.Country,
+		}
+	}
+	fpResp, err := FPAddNominee(fpReq)
 	if err != nil {
 		return "", err
 	}
@@ -321,30 +353,48 @@ func AddNominee(uid, investorID string, req structs.NomineeRequest) (string, err
 	return fpResp.ID, nil
 }
 
-func ActivateAccount(uid string, fpData *structs.UserFPData) (string, error) {
-	nominees := []string{}
-	if fpData.FpNomineeID != "" {
-		nominees = []string{fpData.FpNomineeID}
+func ActivateAccount(uid string, fpData *structs.UserFPData, nomineeIdentityProofType string) (string, error) {
+	// Step 1: Create or reuse MF investment account
+	accountID := fpData.FpInvestmentAccountID
+	if accountID == "" {
+		fpResp, err := FPCreateMFInvestmentAccount(structs.FPMFInvestmentAccountRequest{
+			PrimaryInvestor: fpData.FpInvestorID,
+			HoldingPattern:  "single",
+		})
+		if err != nil {
+			return "", err
+		}
+		accountID = fpResp.ID
 	}
 
-	fpResp, err := FPCreateMFInvestmentAccount(structs.FPMFInvestmentAccountRequest{
-		InvestorProfileID: fpData.FpInvestorID,
-		PrimaryBankID:     fpData.FpBankAccountID,
-		HoldingType:       "single",
-		Nominees:          nominees,
-	})
-	if err != nil {
-		return "", err
+	// Step 2: Set folio defaults (bank, phone, email, address, nominee)
+	folio := structs.FPFolioDefaults{
+		CommunicationEmailAddress: fpData.FpEmailID,
+		CommunicationMobileNumber: fpData.FpPhoneID,
+		CommunicationAddress:      fpData.FpAddressID,
+		PayoutBankAccount:         fpData.FpBankAccountID,
+	}
+	if fpData.FpNomineeID != "" {
+		folio.Nominee1 = fpData.FpNomineeID
+		folio.Nominee1AllocationPercent = "100"
+		folio.Nominee1IdentityProofType = nomineeIdentityProofType
+		folio.NominationsInfoVisibility = "show_nomination_status"
+	}
+	if err := FPPatchMFInvestmentAccount(accountID, structs.FPMFInvestmentAccountPatchRequest{
+		ID:            accountID,
+		FolioDefaults: folio,
+	}); err != nil {
+		return "", fmt.Errorf("folio defaults update failed: %w", err)
 	}
 
 	if err := saveUserFPFields(uid, map[string]interface{}{
-		"fp_investment_account_id": fpResp.ID,
+		"fp_investment_account_id": accountID,
 		"onboarding_step":          4,
 		"is_activated":             true,
 	}); err != nil {
 		return "", err
 	}
-	return fpResp.ID, nil
+	return accountID, nil
 }
 
 func GetOnboardingStatus(uid string) (*structs.OnboardingStatusResponse, error) {

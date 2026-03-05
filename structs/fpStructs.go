@@ -154,18 +154,41 @@ type FPBankAccountResponse struct {
 // ---- FP Related Party (Nominee) ----
 
 type FPNomineeRequest struct {
-	InvestorProfileID string  `json:"profile"`
-	Name              string  `json:"name"`
-	Relation          string  `json:"relation"`
-	DateOfBirth       string  `json:"date_of_birth,omitempty"`
-	AllocationPercent float64 `json:"allocation_percentage"`
-	IsMajor           bool    `json:"is_major"`
-	Guardian          *FPGuardian `json:"guardian,omitempty"`
+	InvestorProfileID string `json:"profile"`
+	Name              string `json:"name"`
+	Relationship      string `json:"relationship"`
+	DateOfBirth       string `json:"date_of_birth,omitempty"`
+	// Identity fields (allowed only if nominee is 18+)
+	PAN                    string          `json:"pan,omitempty"`
+	EmailAddress           string          `json:"email_address,omitempty"`
+	AadhaarNumber          string          `json:"aadhaar_number,omitempty"`
+	PassportNumber         string          `json:"passport_number,omitempty"`
+	DrivingLicenceNumber   string          `json:"driving_licence_number,omitempty"`
+	PhoneNumber            *FPNomineePhone `json:"phone_number,omitempty"`
+	Address                *FPNomineeAddr  `json:"address,omitempty"`
+	// Guardian fields (for minor nominees)
+	GuardianName                  string `json:"guardian_name,omitempty"`
+	GuardianPhoneNumber           string `json:"guardian_phone_number,omitempty"`
+	GuardianAddress               string `json:"guardian_address,omitempty"`
+	GuardianEmailAddress          string `json:"guardian_email_address,omitempty"`
+	GuardianPAN                   string `json:"guardian_pan,omitempty"`
+	GuardianAadhaarNumber         string `json:"guardian_aadhaar_number,omitempty"`
+	GuardianPassportNumber        string `json:"guardian_passport_number,omitempty"`
+	GuardianDrivingLicenceNumber  string `json:"guardian_driving_licence_number,omitempty"`
 }
 
-type FPGuardian struct {
-	Name     string `json:"name"`
-	Relation string `json:"relation"`
+type FPNomineePhone struct {
+	ISD    string `json:"isd"`
+	Number string `json:"number"`
+}
+
+type FPNomineeAddr struct {
+	Line1      string `json:"line1"`
+	Line2      string `json:"line2,omitempty"`
+	City       string `json:"city,omitempty"`
+	State      string `json:"state,omitempty"`
+	PostalCode string `json:"postal_code"`
+	Country    string `json:"country"`
 }
 
 type FPNomineeResponse struct {
@@ -177,15 +200,29 @@ type FPNomineeResponse struct {
 // ---- FP Investment Account ----
 
 type FPMFInvestmentAccountRequest struct {
-	InvestorProfileID string   `json:"profile"`
-	PrimaryBankID     string   `json:"primary_bank_account"`
-	HoldingType       string   `json:"holding_pattern"`
-	Nominees          []string `json:"nominees,omitempty"`
+	PrimaryInvestor string `json:"primary_investor"`
+	HoldingPattern  string `json:"holding_pattern"`
 }
 
 type FPMFInvestmentAccountResponse struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
+}
+
+type FPFolioDefaults struct {
+	CommunicationEmailAddress string `json:"communication_email_address,omitempty"`
+	CommunicationMobileNumber string `json:"communication_mobile_number,omitempty"`
+	CommunicationAddress      string `json:"communication_address,omitempty"`
+	PayoutBankAccount         string `json:"payout_bank_account,omitempty"`
+	Nominee1                  string `json:"nominee1,omitempty"`
+	Nominee1AllocationPercent string `json:"nominee1_allocation_percentage,omitempty"`
+	Nominee1IdentityProofType string `json:"nominee1_identity_proof_type,omitempty"`
+	NominationsInfoVisibility string `json:"nominations_info_visibility,omitempty"`
+}
+
+type FPMFInvestmentAccountPatchRequest struct {
+	ID            string          `json:"id"`
+	FolioDefaults FPFolioDefaults `json:"folio_defaults"`
 }
 
 // ---- FP Fund Schemes (OMS API: GET /api/oms/fund_schemes) ----

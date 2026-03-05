@@ -140,9 +140,9 @@ func AddBankAccount(c *gin.Context) {
 	fpPreVerifID, fpBankAccountID, err := service.AddBankAccount(uid, fpData.FpInvestorID, req)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"status":                  500,
-			"msg":                     err.Error(),
-			"fp_pre_verification_id":  fpPreVerifID,
+			"status":                 500,
+			"msg":                    err.Error(),
+			"fp_pre_verification_id": fpPreVerifID,
 		})
 		return
 	}
@@ -180,16 +180,12 @@ func ActivateAccount(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": 400, "msg": err.Error()})
 		return
 	}
-	if !req.AgreedTnC {
-		c.JSON(http.StatusBadRequest, gin.H{"status": 400, "msg": "terms and conditions must be accepted"})
-		return
-	}
 	fpData, err := service.GetUserFPData(uid)
 	if err != nil || fpData.FpInvestorID == "" || fpData.FpBankAccountID == "" {
 		c.JSON(http.StatusOK, gin.H{"status": 400, "msg": "complete profile and bank setup before activating"})
 		return
 	}
-	accountID, err := service.ActivateAccount(uid, fpData)
+	accountID, err := service.ActivateAccount(uid, fpData, req.Nominee1IdentityProofType)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
 		return

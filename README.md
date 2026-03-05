@@ -179,7 +179,7 @@ Until `status` is `"completed"` or `"failed"`.
 | CTS   | int64  | Created timestamp (epoch ms)    |
 | RFC   | string | Referral code                   |
 
-#### `user_fp_collection/{uid}` — FP ID mappings (written by this service)
+#### `user_fp_mapping/{uid}` — FP ID mappings (written by this service)
 
 | Field                    | Type   | Description                        |
 |--------------------------|--------|------------------------------------|
@@ -460,7 +460,8 @@ Creates a bank account in FP tenant, then runs penny-drop verification via FP PO
 
 #### `POST /nominee`
 
-Adds a nominee to the investor profile.
+Adds a nominee (related party) to the investor profile. One FP API call: `POST /v2/related_parties`.
+Frontend is responsible for age validation and determining whether to pass nominee vs guardian fields.
 
 **Body:**
 ```json
@@ -468,12 +469,34 @@ Adds a nominee to the investor profile.
   "name": "Priya Kumar",
   "relation": "spouse",
   "date_of_birth": "1992-08-20",
-  "allocation_percentage": 100,
-  "is_major": true
+  "pan": "DFGPX3751K",
+  "email_address": "nominee@example.com",
+  "phone_number": {
+    "isd": "91",
+    "number": "9876543210"
+  },
+  "address": {
+    "line1": "123, test street",
+    "line2": "",
+    "city": "Anand",
+    "state": "Gujarat",
+    "postal_code": "388120",
+    "country": "in"
+  }
 }
 ```
 
-**Response:** `{ "fp_nominee_id": "rp_xxx" }`
+> **Identity fields** (provide exactly one — must match the `nominee1_identity_proof_type` sent during activate):
+> - `pan` — PAN number
+> - `aadhaar_number` — Aadhaar number
+> - `passport_number` — Passport number
+> - `driving_licence_number` — Driving licence number
+
+> **Guardian fields** (for minor nominees): `guardian_name`, `guardian_phone_number`, `guardian_address`, `guardian_email_address`, `guardian_pan`, `guardian_aadhaar_number`, `guardian_passport_number`, `guardian_driving_licence_number`
+
+> `relation` valid values: `father`, `mother`, `spouse`, `son`, `daughter`, `brother`, `sister`, `aunt`, `uncle`, `nephew`, `niece`, `grand_father`, `grand_mother`, `grand_son`, `grand_daughter`, `brother_in_law`, `sister_in_law`, `father_in_law`, `mother_in_law`, `son_in_law`, `daughter_in_law`, `court_appointed_legal_guardian`, `others`
+
+**Response:** `{ "fp_nominee_id": "relp_xxx" }`
 
 **Saves to Firestore:** `fp_nominee_id`, `onboarding_step: 3`
 
@@ -481,12 +504,19 @@ Adds a nominee to the investor profile.
 
 #### `POST /activate`
 
-Creates the MF investment account in FP. Requires investor profile + bank account to be set up first.
+Creates and fully configures the MF investment account. Makes two FP API calls:
+
+1. `POST /v2/mf_investment_accounts` — creates the account (skipped if already exists)
+2. `PATCH /v2/mf_investment_accounts` — sets folio defaults (bank, phone, email, address, nominee)
 
 **Body:**
 ```json
-{ "agreed_tnc": true }
+{
+  "nominee1_identity_proof_type": "pan"
+}
 ```
+
+> `nominee1_identity_proof_type` — required if nominee was added. Must match the identity field provided during nominee creation. Allowed values: `pan`, `aadhaar`, `driving_licence`, `passport`
 
 **Response:**
 ```json
@@ -495,6 +525,15 @@ Creates the MF investment account in FP. Requires investor profile + bank accoun
   "is_activated": true
 }
 ```
+
+**Folio defaults set automatically from Firestore:**
+- `communication_email_address` → fp_email_id
+- `communication_mobile_number` → fp_phone_id
+- `communication_address` → fp_address_id
+- `payout_bank_account` → fp_bank_account_id
+- `nominee1` → fp_nominee_id (if set, with allocation 100%)
+- `nominee1_identity_proof_type` → from request body
+- `nominations_info_visibility` → `show_nomination_status`
 
 **Saves to Firestore:** `fp_investment_account_id`, `onboarding_step: 4`, `is_activated: true`
 
@@ -638,7 +677,7 @@ Used for async identity verification (KYC) and bank penny-drop.
 ```
 FP Status    → DB Status
 "accepted"   → "pending"    (async processing in progress)
-"completed"  → "completed"
+"completed"  → "completed"  (unless readiness.status == "failed" → "failed")
 "failed"     → "failed"
 ```
 
