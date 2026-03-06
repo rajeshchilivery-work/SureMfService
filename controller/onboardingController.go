@@ -4,6 +4,7 @@ import (
 	"SureCommonService/utils"
 	"SureMFService/service"
 	"SureMFService/structs"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +13,14 @@ import (
 func getUID(c *gin.Context) string {
 	uid, _ := c.Get("uid")
 	return uid.(string)
+}
+
+func getUserIP(c *gin.Context) string {
+	ip := c.ClientIP()
+	if ip == "::1" || ip == "" || ip == "127.0.0.1" {
+		return "10.0.128.12"
+	}
+	return ip
 }
 
 func GetPreVerificationStatus(c *gin.Context) {
@@ -171,6 +180,35 @@ func AddNominee(c *gin.Context) {
 		return
 	}
 	utils.HandleResponse(c, gin.H{"fp_nominee_id": nomineeID}, nil, "MF")
+}
+
+func PaymentCallback(c *gin.Context) {
+	log.Printf("[PAYMENT CALLBACK] method=%s query=%s", c.Request.Method, c.Request.URL.RawQuery)
+	if c.Request.Method == http.MethodPost {
+		var payload map[string]interface{}
+		if err := c.ShouldBindJSON(&payload); err == nil {
+			log.Printf("[PAYMENT CALLBACK] body: %+v", payload)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":     "received",
+		"order_id":   c.Query("order_id"),
+		"payment_id": c.Query("payment_id"),
+	})
+}
+
+func MandateCallback(c *gin.Context) {
+	log.Printf("[MANDATE CALLBACK] method=%s query=%s", c.Request.Method, c.Request.URL.RawQuery)
+	if c.Request.Method == http.MethodPost {
+		var payload map[string]interface{}
+		if err := c.ShouldBindJSON(&payload); err == nil {
+			log.Printf("[MANDATE CALLBACK] body: %+v", payload)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":     "received",
+		"mandate_id": c.Query("mandate_id"),
+	})
 }
 
 func ActivateAccount(c *gin.Context) {

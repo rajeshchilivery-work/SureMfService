@@ -131,6 +131,9 @@ func CreateInvestorProfile(uid string, req structs.InvestorProfileRequest) (stri
 		Occupation:              req.Occupation,
 		PAN:                     user.PAN,
 		PlaceOfBirth:            "IN",
+		CountryOfBirth:          "IN",
+		NationalityCountry:      "IN",
+		CitizenshipCountries:    []string{"IN"},
 		UseDefaultTaxResidences: "false",
 		FirstTaxResidency: structs.FPTaxResidency{
 			Country:     "IN",

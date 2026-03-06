@@ -45,6 +45,10 @@ type Config struct {
 	// MSG91
 	MSG91AuthKey    string
 	MSG91TemplateID string
+
+	// Payment
+	PaymentPostbackURL  string
+	MandatePostbackURL  string
 }
 
 var AppConfig *Config
@@ -82,6 +86,9 @@ func Init() {
 
 		MSG91AuthKey:    getEnv("MSG91_AUTH_KEY", ""),
 		MSG91TemplateID: getEnv("MSG91_TEMPLATE_ID", ""),
+
+		PaymentPostbackURL:  getEnv("PAYMENT_POSTBACK_URL", "http://localhost:9113/sure-mf/callbacks/payment"),
+		MandatePostbackURL:  getEnv("MANDATE_POSTBACK_URL", "http://localhost:9113/sure-mf/callbacks/mandate"),
 	}
 }
 
