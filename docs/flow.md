@@ -697,6 +697,315 @@ Every transaction lifecycle is logged to `sure_mf.mf_events` across 4 phases:
 
 ---
 
+## Data Model — Storage Operations per Endpoint
+
+### Storage Overview
+
+| Store | Purpose | Access Pattern |
+|-------|---------|----------------|
+| **Firestore `users/{uid}`** | User profile (name, PAN, DOB, phone, email, gender) | Read-only — written by frontend/auth layer |
+| **Firestore `user_fp_mapping/{uid}`** | FP resource IDs + onboarding progress | Read & write — updated incrementally during onboarding |
+| **PostgreSQL `sure_user.users`** | User master data (name, PAN, DOB, phone, email, gender) | Read-only — source of truth for KYC & profile creation |
+| **PostgreSQL `sure_mf.pre_verification_usage`** | KYC & bank penny-drop verification tracking | Create, read, update |
+| **PostgreSQL `sure_mf.mf_events`** | Audit trail for all order/mandate lifecycle events | Create, read (dedup check) |
+| **PostgreSQL `sure_mf.otp_activity`** | OTP confirmation lifecycle tracking | Read, update |
+
+---
+
+### Onboarding Endpoints
+
+#### `GET /status`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | **Read** | Firestore `user_fp_mapping/{uid}` | Fetch all FP IDs + onboarding_step + is_activated |
+| 2 | **Read** | PG `sure_mf.pre_verification_usage` | Latest KYC verification row (`WHERE uuid=? AND verification_type='kyc_verification' ORDER BY created_at DESC`) |
+| 3 | **Read** | PG `sure_mf.pre_verification_usage` | Latest bank verification row (`WHERE uuid=? AND verification_type='bank_account_verification' ORDER BY created_at DESC`) |
+
+#### `POST /kyc-check`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | **Read** | PG `sure_user.users` | Fetch Name, DOB, PAN (`WHERE uuid=?`) |
+| 2 | FP API | — | `POST /poa/pre_verifications` (KYC check) |
+| 3 | **Create** | PG `sure_mf.pre_verification_usage` | `uuid, verification_type='kyc_verification', pan, status='pending', fp_pre_verification_id, triggered_by='kyc_check'` |
+| 4 | FP API | — | Poll `GET /poa/pre_verifications/{id}` (up to 5×, 1s interval) |
+| 5 | **Update** | PG `sure_mf.pre_verification_usage` | `status` + `poll_count` (if status changed) |
+
+#### `GET /pre-verification/:fp_id`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | **Read** | PG `sure_mf.pre_verification_usage` | `WHERE fp_pre_verification_id=?` |
+| 2 | FP API | — | `GET /poa/pre_verifications/{id}` |
+| 3 | **Update** | PG `sure_mf.pre_verification_usage` | `status` + `poll_count` (if status changed) |
+
+#### `POST /investor-profile`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | **Read** | PG `sure_user.users` | Fetch Name, DOB, Gender, PAN |
+| 2 | FP API | — | `POST /v2/investor_profiles` |
+| 3 | **Write** | Firestore `user_fp_mapping/{uid}` | `fp_investor_id`, `onboarding_step=1` |
+
+#### `POST /phone`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | **Read** | PG `sure_user.users` | Fetch PhoneNumber |
+| 2 | FP API | — | `POST /v2/phone_numbers` |
+| 3 | **Write** | Firestore `user_fp_mapping/{uid}` | `fp_phone_id` |
+
+#### `POST /email`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | **Read** | PG `sure_user.users` | Fetch Email |
+| 2 | FP API | — | `POST /v2/email_addresses` |
+| 3 | **Write** | Firestore `user_fp_mapping/{uid}` | `fp_email_id` |
+
+#### `POST /address`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `POST /v2/addresses` |
+| 2 | **Write** | Firestore `user_fp_mapping/{uid}` | `fp_address_id` |
+
+> No DB read — address comes entirely from request body.
+
+#### `POST /bank`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | **Read** | PG `sure_user.users` | Fetch PAN, Name |
+| 2 | FP API | — | `POST /v2/bank_accounts` |
+| 3 | FP API | — | `POST /poa/pre_verifications` (penny drop) |
+| 4 | **Create** | PG `sure_mf.pre_verification_usage` | `uuid, verification_type='bank_account_verification', pan, status='pending', fp_pre_verification_id, bank_ifsc, bank_account_number, triggered_by='bank_verify'` |
+| 5 | FP API | — | Poll `GET /poa/pre_verifications/{id}` (up to 5×) |
+| 6 | **Update** | PG `sure_mf.pre_verification_usage` | `status` + `poll_count` |
+| 7 | **Write** | Firestore `user_fp_mapping/{uid}` | `fp_bank_account_id`, `onboarding_step=2` (only if verification completed) |
+
+#### `POST /nominee`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `POST /v2/related_parties` |
+| 2 | **Write** | Firestore `user_fp_mapping/{uid}` | `fp_nominee_id`, `onboarding_step=3` |
+
+> No DB read — nominee data comes entirely from request body.
+
+#### `POST /activate`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `POST /v2/mf_investment_accounts` (skipped if already exists) |
+| 2 | FP API | — | `PATCH /v2/mf_investment_accounts` (set folio defaults + nominee) |
+| 3 | **Write** | Firestore `user_fp_mapping/{uid}` | `fp_investment_account_id`, `onboarding_step=4`, `is_activated=true` |
+
+> Reads `fpData` (Firestore) passed in from controller — all FP IDs needed for the PATCH are already in memory.
+
+---
+
+### Order Endpoints
+
+#### `POST /orders/purchase`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `POST /v2/mf_purchases` |
+| 2 | **Create** | PG `sure_mf.mf_events` | `event_type='purchase_order_created', fp_entity_id, isin=scheme_id, amount` |
+
+#### `POST /orders/:id/confirm-otp`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `POST /v2/mf_purchases/{id}/otp` (or sip/redemption variant) |
+| 2 | **Read** | PG `sure_mf.otp_activity` | `WHERE fp_order_id=? ORDER BY initiated_at DESC` |
+| 3 | **Update** | PG `sure_mf.otp_activity` | `status='confirmed'/'failed', resulting_order_state, confirmed_at` |
+
+#### `PATCH /orders/:id/consent`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `GET /v2/phone_numbers/{fp_phone_id}` + `GET /v2/email_addresses/{fp_email_id}` (auto-consent) |
+| 2 | FP API | — | `PATCH /v2/mf_purchases` (consent with email + mobile) |
+
+> No DB write. Phone/email IDs come from `fpData` (Firestore) passed by controller.
+
+#### `POST /orders/:id/payment`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `GET /v2/mf_purchases/{id}` → fetch `old_id` |
+| 2 | FP API | — | `GET /v2/bank_accounts/{fp_bank_account_id}` → fetch `old_id` |
+| 3 | FP API | — | `POST /api/pg/payments/netbanking` |
+
+> No DB read/write. Returns `token_url` for payment.
+
+#### `PATCH /orders/:id/confirm`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `PATCH /v2/mf_purchases` (`state='confirmed'`) |
+| 2 | **Create** | PG `sure_mf.mf_events` | `event_type='purchase_confirmed', fp_entity_id, isin, amount, raw_payload={state}` |
+
+#### `GET /orders/:id/status`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `GET /v2/mf_purchases/{id}` |
+| 2 | **Read** | PG `sure_mf.mf_events` | `HasTerminalEvent(fp_entity_id, 'purchase_successful'/'purchase_failed')` — dedup check |
+| 3 | **Create** | PG `sure_mf.mf_events` | Terminal event logged only if not already present |
+
+#### `GET /orders` (list all)
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `GET /v2/mf_purchases` + `/v2/mf_purchase_plans` + `/v2/mf_redemptions` |
+
+> No DB operations. Pure FP API passthrough.
+
+---
+
+### SIP Endpoints
+
+#### `POST /orders/sip`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `POST /v2/mf_purchase_plans` |
+| 2 | **Create** | PG `sure_mf.mf_events` | `event_type='sip_order_created', isin, amount, raw_payload={frequency, installment_day, installments, mandate_id}` |
+
+#### `PATCH /orders/sips/:id/confirm`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | Auto-consent: `GET /v2/phone_numbers` + `GET /v2/email_addresses` |
+| 2 | FP API | — | `PATCH /v2/mf_purchase_plans` (`state='confirmed'` + consent) |
+| 3 | **Create** | PG `sure_mf.mf_events` | `event_type='sip_confirmed', isin, amount, raw_payload={state}` |
+
+#### `GET /orders/sips/:id`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `GET /v2/mf_purchase_plans/{id}` |
+| 2 | **Read** | PG `sure_mf.mf_events` | `HasTerminalEvent` dedup check |
+| 3 | **Create** | PG `sure_mf.mf_events` | Terminal event (`sip_active`/`sip_failed`) if not already logged |
+
+#### `GET /orders/sips` (list)
+
+> FP API only — no DB operations.
+
+#### `GET /orders/sips/:id/installments`
+
+> FP API only — no DB operations.
+
+#### `POST /orders/sips/:id/cancel`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `POST /v2/mf_purchase_plans/cancel` |
+| 2 | **Create** | PG `sure_mf.mf_events` | `event_type='sip_cancelled', isin, amount` |
+
+---
+
+### Redemption Endpoints
+
+#### `POST /orders/redemption`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `POST /v2/mf_redemptions` |
+| 2 | **Create** | PG `sure_mf.mf_events` | `event_type='redemption_order_created', isin, amount, units` |
+
+#### `PATCH /orders/redemptions/:id/confirm`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | Auto-consent: `GET /v2/phone_numbers` + `GET /v2/email_addresses` |
+| 2 | FP API | — | `PATCH /v2/mf_redemptions` (`state='confirmed'` + consent) |
+| 3 | **Create** | PG `sure_mf.mf_events` | `event_type='redemption_confirmed', isin, amount, units, raw_payload={state}` |
+
+#### `GET /orders/redemptions/:id`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `GET /v2/mf_redemptions/{id}` |
+| 2 | **Read** | PG `sure_mf.mf_events` | `HasTerminalEvent` dedup check |
+| 3 | **Create** | PG `sure_mf.mf_events` | Terminal event (`redemption_successful`/`redemption_failed`) if not already logged |
+
+#### `GET /orders/redemptions` (list)
+
+> FP API only — no DB operations.
+
+---
+
+### Portfolio & Holdings Endpoints
+
+#### `GET /portfolio`, `GET /portfolio/:id`, `GET /holdings`
+
+> FP API only — no DB operations. Controller reads `fpData` from Firestore (via controller-level `GetUserFPData`) to get `fp_investment_account_id`.
+
+---
+
+### Mandate Endpoints
+
+#### `POST /mandates`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `GET /v2/bank_accounts/{fp_bank_account_id}` → fetch `old_id` |
+| 2 | FP API | — | `POST /api/pg/mandates` |
+| 3 | **Create** | PG `sure_mf.mf_events` | `event_type='mandate_created', fp_entity_id, amount=mandate_limit, raw_payload={mandate_type}` |
+
+#### `POST /mandates/authorize`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `POST /api/pg/payments/emandate/auth` |
+
+> No DB operations. Returns `token_url`.
+
+#### `GET /mandates`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `GET /v2/bank_accounts/{fp_bank_account_id}` → fetch `old_id` |
+| 2 | FP API | — | `GET /api/pg/mandates?mf_investment_account={id}` |
+
+> No DB write operations.
+
+#### `GET /mandates/:id`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `GET /api/pg/mandates/{id}` |
+| 2 | **Read** | PG `sure_mf.mf_events` | `HasTerminalEvent` dedup check |
+| 3 | **Create** | PG `sure_mf.mf_events` | Terminal event (`mandate_approved`/`mandate_failed`) if not already logged |
+
+#### `POST /mandates/:id/cancel`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | FP API | — | `POST /api/pg/mandates/{id}/cancel` |
+| 2 | **Create** | PG `sure_mf.mf_events` | `event_type='mandate_cancelled'` |
+
+---
+
+### Controller-Level Data Access
+
+Every user-scoped controller (`/:uid/...`) calls `GetUserFPData(uid)` to load Firestore `user_fp_mapping/{uid}` before invoking the service layer. This `fpData` struct is passed into service functions — they don't re-read Firestore themselves.
+
+```
+Controller: Firestore READ user_fp_mapping/{uid} → fpData
+    ↓ (passes fpData)
+Service: FP API calls + PostgreSQL reads/writes
+    ↓ (on success)
+Service: Firestore WRITE user_fp_mapping/{uid} (onboarding steps only)
+```
+
+---
+
 ## End-to-End Flow Summary
 
 ### Onboarding
