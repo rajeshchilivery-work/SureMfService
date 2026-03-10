@@ -29,7 +29,6 @@ func CreateMandate(uid string, fpData *structs.UserFPData, req structs.CreateMan
 		BankAccountID: bankAccount.OldID,
 		MandateType:   mandateType,
 		MandateLimit:  req.MandateLimit,
-		ProviderName:  "CYBRILLAPOA",
 	})
 	if err != nil {
 		return nil, err
@@ -55,13 +54,13 @@ func AuthorizeMandate(uid string, mandateID int) (*structs.FPMandateAuthResponse
 
 func ListMandates(fpData *structs.UserFPData) (*structs.FPMandateListResponse, error) {
 	if fpData.FpBankAccountID == "" {
-		return &structs.FPMandateListResponse{Data: []structs.FPMandateResponse{}}, nil
+		return &structs.FPMandateListResponse{Mandates: []structs.FPMandateResponse{}}, nil
 	}
 	bankAccount, err := FPGetBankAccount(fpData.FpBankAccountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch bank account: %w", err)
 	}
-	return FPListMandates(strconv.Itoa(bankAccount.OldID))
+	return FPListMandates(bankAccount.OldID)
 }
 
 func GetMandateStatus(uid, mandateID string) (*structs.FPMandateResponse, error) {

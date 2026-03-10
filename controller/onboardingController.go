@@ -53,12 +53,7 @@ func GetOnboardingStatus(c *gin.Context) {
 
 func KYCCheck(c *gin.Context) {
 	uid := getUID(c)
-	var req structs.KYCCheckRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": 400, "msg": err.Error()})
-		return
-	}
-	pv, err := service.KYCCheck(uid, req)
+	pv, err := service.KYCCheck(uid)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
 		return

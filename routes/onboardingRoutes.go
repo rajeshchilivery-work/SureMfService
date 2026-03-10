@@ -13,7 +13,7 @@ func onboardingRoutes(rg *gin.RouterGroup) {
 	{
 		onboarding.GET("/status", controller.GetOnboardingStatus)
 		onboarding.GET("/pre-verification/:fp_id", controller.GetPreVerificationStatus)
-		onboarding.POST("/kyc-check", controller.KYCCheck)
+		onboarding.GET("/kyc-check", controller.KYCCheck)
 		onboarding.POST("/investor-profile", controller.CreateInvestorProfile)
 		onboarding.POST("/phone", controller.AddPhone)
 		onboarding.POST("/email", controller.AddEmail)

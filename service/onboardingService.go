@@ -76,15 +76,18 @@ func deriveBankVerifStatus(pv *structs.FPPreVerification) string {
 	return normalisePreVerifStatus(pv)
 }
 
-func KYCCheck(uid string, req structs.KYCCheckRequest) (*entity.PreVerificationUsage, error) {
+func KYCCheck(uid string) (*entity.PreVerificationUsage, error) {
 	user, err := repository.GetSureUserByUID(uid)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load user: %w", err)
 	}
+	if user.PAN == "" {
+		return nil, fmt.Errorf("PAN not found for user")
+	}
 
 	fpPV, err := POACreatePreVerification(structs.FPPreVerificationRequest{
-		InvestorIdentifier: req.PAN,
-		PAN:                &structs.FPPreVerifField{Value: req.PAN},
+		InvestorIdentifier: user.PAN,
+		PAN:                &structs.FPPreVerifField{Value: user.PAN},
 		Name:               &structs.FPPreVerifField{Value: user.Name},
 		DateOfBirth:        &structs.FPPreVerifField{Value: user.DOB.Format("2006-01-02")},
 	})
@@ -97,7 +100,7 @@ func KYCCheck(uid string, req structs.KYCCheckRequest) (*entity.PreVerificationU
 	pv := &entity.PreVerificationUsage{
 		UUID:                uid,
 		VerificationType:    "kyc_verification",
-		Pan:                 req.PAN,
+		Pan:                 user.PAN,
 		Status:              "pending",
 		FpPreVerificationID: &fpID,
 		TriggeredBy:         strPtr("kyc_check"),
@@ -379,7 +382,7 @@ func ActivateAccount(uid string, fpData *structs.UserFPData, nomineeIdentityProo
 	}
 	if fpData.FpNomineeID != "" {
 		folio.Nominee1 = fpData.FpNomineeID
-		folio.Nominee1AllocationPercent = "100"
+		folio.Nominee1AllocationPercent = 100
 		folio.Nominee1IdentityProofType = nomineeIdentityProofType
 		folio.NominationsInfoVisibility = "show_nomination_status"
 	}

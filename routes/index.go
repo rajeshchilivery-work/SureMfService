@@ -28,8 +28,9 @@ func Routes(router *gin.Engine) {
 	user := base.Group("/:uid")
 	onboardingRoutes(user)
 	orderRoutes(user)
+	creditRoutes(user)
 
-	// Holdings (legacy OMS API)
+	// Holdings (OMS API)
 	holdings := user.Group("/holdings")
 	holdings.Use(middleware.AuthMiddleware())
 	holdings.GET("", controller.GetHoldings)
@@ -38,7 +39,12 @@ func Routes(router *gin.Engine) {
 	portfolio := user.Group("/portfolio")
 	portfolio.Use(middleware.AuthMiddleware())
 	portfolio.GET("", controller.GetPortfolio)
-	portfolio.GET("/:id", controller.GetFolioDetail)
+
+	// Reports (transaction reports)
+	reports := user.Group("/reports")
+	reports.Use(middleware.AuthMiddleware())
+	reports.GET("/scheme-returns", controller.GetSchemeWiseReturns)
+	reports.GET("/account-returns", controller.GetInvestmentAccountReturns)
 
 	// Mandates
 	mandates := user.Group("/mandates")

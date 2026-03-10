@@ -362,8 +362,8 @@ func FPGetBankAccount(bankAccountID string) (*structs.FPBankAccountResponse, err
 	return &resp, json.Unmarshal(b, &resp)
 }
 
-func FPGetHoldings(folio string) ([]byte, error) {
-	path := "/api/oms/reports/holdings?folios=" + folio
+func FPGetHoldings(investmentAccountOldID int) ([]byte, error) {
+	path := fmt.Sprintf("/api/oms/reports/holdings?investment_account_id=%d", investmentAccountOldID)
 	b, status, err := fpRequest(http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -372,30 +372,6 @@ func FPGetHoldings(folio string) ([]byte, error) {
 		return nil, fmt.Errorf("fp get holdings error %d: %s", status, string(b))
 	}
 	return b, nil
-}
-
-func FPConfirmOTP(orderType, orderID, otp string) error {
-	// orderType determines endpoint: mf_purchases, mf_purchase_plans, mf_redemptions
-	endpointMap := map[string]string{
-		"purchase":   "mf_purchases",
-		"sip":        "mf_purchase_plans",
-		"redemption": "mf_redemptions",
-	}
-	endpoint, ok := endpointMap[orderType]
-	if !ok {
-		return fmt.Errorf("unknown order type: %s", orderType)
-	}
-
-	data := map[string]string{"otp": otp}
-	path := fmt.Sprintf("/v2/%s/%s/otp", endpoint, orderID)
-	b, status, err := fpRequest(http.MethodPost, path, data)
-	if err != nil {
-		return err
-	}
-	if status >= 400 {
-		return fmt.Errorf("fp confirm otp error %d: %s", status, string(b))
-	}
-	return nil
 }
 
 // ---- SIP Lifecycle ----
@@ -458,19 +434,6 @@ func FPCancelSIP(sipID, cancellationCode string) (*structs.FPSIPDetailResponse, 
 	return &resp, json.Unmarshal(b, &resp)
 }
 
-func FPGetSIPInstallments(sipID string) (*structs.FPSIPInstallmentResponse, error) {
-	path := "/v2/mf_purchase_installments?mf_purchase_plan=" + sipID
-	b, status, err := fpRequest(http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	if status >= 400 {
-		return nil, fmt.Errorf("fp get sip installments error %d: %s", status, string(b))
-	}
-	var resp structs.FPSIPInstallmentResponse
-	return &resp, json.Unmarshal(b, &resp)
-}
-
 // ---- Redemption Lifecycle ----
 
 func FPConfirmRedemption(req structs.FPRedemptionConfirmRequest) (*structs.FPRedemptionDetailResponse, error) {
@@ -530,16 +493,30 @@ func FPGetFolios(investmentAccountID string) (*structs.FPFolioListResponse, erro
 	return &resp, json.Unmarshal(b, &resp)
 }
 
-func FPGetFolioDetail(folioID string) (*structs.FPFolio, error) {
-	b, status, err := fpRequest(http.MethodGet, "/v2/mf_folios/"+folioID, nil)
+// ---- Reports ----
+
+func FPGetSchemeWiseReturns(mfiaID string) ([]byte, error) {
+	body := structs.FPTransactionReportRequest{MFInvestmentAccount: mfiaID}
+	b, status, err := fpRequest(http.MethodPost, "/v2/transactions/reports/scheme_wise_returns", body)
 	if err != nil {
 		return nil, err
 	}
 	if status >= 400 {
-		return nil, fmt.Errorf("fp get folio detail error %d: %s", status, string(b))
+		return nil, fmt.Errorf("fp scheme wise returns error %d: %s", status, string(b))
 	}
-	var resp structs.FPFolio
-	return &resp, json.Unmarshal(b, &resp)
+	return b, nil
+}
+
+func FPGetInvestmentAccountReturns(mfiaID string) ([]byte, error) {
+	body := structs.FPTransactionReportRequest{MFInvestmentAccount: mfiaID}
+	b, status, err := fpRequest(http.MethodPost, "/v2/transactions/reports/investment_account_wise_returns", body)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 400 {
+		return nil, fmt.Errorf("fp account wise returns error %d: %s", status, string(b))
+	}
+	return b, nil
 }
 
 // ---- Mandates ----
@@ -568,8 +545,8 @@ func FPAuthorizeMandate(req structs.FPMandateAuthRequest) (*structs.FPMandateAut
 	return &resp, json.Unmarshal(b, &resp)
 }
 
-func FPListMandates(bankAccountOldID string) (*structs.FPMandateListResponse, error) {
-	path := "/api/pg/mandates?bank_account_id=" + bankAccountOldID
+func FPListMandates(bankAccountOldID int) (*structs.FPMandateListResponse, error) {
+	path := fmt.Sprintf("/api/pg/mandates?bank_account_id=%d", bankAccountOldID)
 	b, status, err := fpRequest(http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err

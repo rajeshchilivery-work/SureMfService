@@ -221,7 +221,7 @@ type FPFolioDefaults struct {
 	CommunicationAddress      string `json:"communication_address,omitempty"`
 	PayoutBankAccount         string `json:"payout_bank_account,omitempty"`
 	Nominee1                  string `json:"nominee1,omitempty"`
-	Nominee1AllocationPercent string `json:"nominee1_allocation_percentage,omitempty"`
+	Nominee1AllocationPercent float64 `json:"nominee1_allocation_percentage,omitempty"`
 	Nominee1IdentityProofType string `json:"nominee1_identity_proof_type,omitempty"`
 	NominationsInfoVisibility string `json:"nominations_info_visibility,omitempty"`
 }
@@ -287,9 +287,7 @@ type FPPurchaseOrderRequest struct {
 	MFInvestmentAccount string  `json:"mf_investment_account"`
 	SchemeID            string  `json:"scheme"`
 	Amount              float64 `json:"amount"`
-	FolioNumber         string  `json:"folio_number,omitempty"`
 	UserIP              string  `json:"user_ip"`
-	Gateway             string  `json:"gateway"`
 }
 
 type FPSIPOrderRequest struct {
@@ -304,8 +302,6 @@ type FPSIPOrderRequest struct {
 	PaymentSource            string  `json:"payment_source,omitempty"`
 	AutoGenerateInstallments bool    `json:"auto_generate_installments,omitempty"`
 	NumberOfInstallments     int     `json:"number_of_installments,omitempty"`
-	FolioNumber              string  `json:"folio_number,omitempty"`
-	Gateway                  string  `json:"gateway,omitempty"`
 }
 
 type FPRedemptionOrderRequest struct {
@@ -325,12 +321,6 @@ type FPOrderResponse struct {
 	FolioNumber         string  `json:"folio_number,omitempty"`
 	Scheme              string  `json:"scheme,omitempty"`
 	MFInvestmentAccount string  `json:"mf_investment_account,omitempty"`
-	Gateway             string  `json:"gateway,omitempty"`
-}
-
-type FPOTPRequest struct {
-	OrderID string `json:"id"`
-	OTP     string `json:"otp"`
 }
 
 // ---- FP Consent Update (PATCH /v2/mf_purchases) ----
@@ -367,19 +357,10 @@ type FPConfirmStateRequest struct {
 	State string `json:"state"`
 }
 
-// ---- FP Holdings (GET /api/oms/reports/holdings) ----
+// ---- FP Transaction Report Request (shared by report endpoints) ----
 
-type FPHoldingsResponse struct {
-	Holdings []FPHolding `json:"data"`
-}
-
-type FPHolding struct {
-	FolioNumber string  `json:"folio_number"`
-	SchemeCode  string  `json:"scheme_code"`
-	SchemeName  string  `json:"scheme_name"`
-	Units       float64 `json:"units"`
-	NAV         float64 `json:"nav"`
-	MarketValue float64 `json:"market_value"`
+type FPTransactionReportRequest struct {
+	MFInvestmentAccount string `json:"mf_investment_account"`
 }
 
 // ---- FP SIP Confirm (PATCH /v2/mf_purchase_plans) ----
@@ -410,22 +391,6 @@ type FPSIPDetailResponse struct {
 	RemainingInstallments    int     `json:"remaining_installments,omitempty"`
 	AutoGenerateInstallments bool    `json:"auto_generate_installments,omitempty"`
 	CreatedAt                string  `json:"created_at,omitempty"`
-}
-
-// ---- FP SIP Installments (GET /v2/mf_purchase_installments) ----
-
-type FPSIPInstallmentResponse struct {
-	Data []FPSIPInstallment `json:"data"`
-}
-
-type FPSIPInstallment struct {
-	ID             string  `json:"id"`
-	State          string  `json:"state"`
-	Amount         float64 `json:"amount"`
-	MFPurchasePlan string  `json:"mf_purchase_plan"`
-	ScheduledOn    string  `json:"scheduled_on,omitempty"`
-	ExecutedAt     string  `json:"executed_at,omitempty"`
-	TradeDate      string  `json:"trade_date,omitempty"`
 }
 
 // ---- FP Redemption Confirm (PATCH /v2/mf_redemptions) ----
@@ -490,18 +455,21 @@ type FPCreateMandateRequest struct {
 type FPMandateResponse struct {
 	ID              int     `json:"id"`
 	Status          string  `json:"status,omitempty"`
+	MandateStatus   string  `json:"mandate_status,omitempty"`
 	State           string  `json:"state,omitempty"`
 	BankAccountID   int     `json:"bank_account_id,omitempty"`
+	MandateRef      string  `json:"mandate_ref,omitempty"`
 	MandateType     string  `json:"mandate_type,omitempty"`
 	MandateLimit    float64 `json:"mandate_limit,omitempty"`
 	UMRN            string  `json:"umrn,omitempty"`
-	StartDate       string  `json:"start_date,omitempty"`
-	EndDate         string  `json:"end_date,omitempty"`
+	ValidFrom       string  `json:"valid_from,omitempty"`
+	ValidTo         string  `json:"valid_to,omitempty"`
 	CreatedAt       string  `json:"created_at,omitempty"`
+	ApprovedAt      string  `json:"approved_at,omitempty"`
 }
 
 type FPMandateListResponse struct {
-	Data []FPMandateResponse `json:"data"`
+	Mandates []FPMandateResponse `json:"mandates"`
 }
 
 type FPMandateAuthRequest struct {

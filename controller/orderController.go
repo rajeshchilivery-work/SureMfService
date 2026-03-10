@@ -72,25 +72,6 @@ func PlaceRedemptionOrder(c *gin.Context) {
 	utils.HandleResponse(c, order, nil, "MF")
 }
 
-func ConfirmOTP(c *gin.Context) {
-	uid := getUID(c)
-	orderID := c.Param("id")
-	orderType := c.Query("type") // ?type=purchase|sip|redemption
-	if orderType == "" {
-		orderType = "purchase"
-	}
-	var req structs.ConfirmOTPRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": 400, "msg": err.Error()})
-		return
-	}
-	if err := service.ConfirmOrderOTP(uid, orderID, orderType, req.OTP); err != nil {
-		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
-		return
-	}
-	utils.HandleResponse(c, gin.H{"message": "OTP confirmed successfully"}, nil, "MF")
-}
-
 func GetOrders(c *gin.Context) {
 	uid := getUID(c)
 	fpData, err := service.GetUserFPData(uid)
@@ -166,17 +147,18 @@ func GetPurchaseStatus(c *gin.Context) {
 }
 
 func GetHoldings(c *gin.Context) {
-	folio := c.Query("folio")
-	if folio == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"status": 400, "msg": "folio query parameter is required"})
-		return
-	}
-	holdings, err := service.GetHoldings(folio)
+	uid := getUID(c)
+	fpData, err := service.GetUserFPData(uid)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
 		return
 	}
-	utils.HandleResponse(c, holdings.Holdings, nil, "MF")
+	holdings, err := service.GetHoldings(fpData)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
+		return
+	}
+	utils.HandleResponse(c, holdings, nil, "MF")
 }
 
 // ---- SIP Lifecycle ----
@@ -216,16 +198,6 @@ func ListSIPs(c *gin.Context) {
 		return
 	}
 	resp, err := service.ListSIPs(fpData)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
-		return
-	}
-	utils.HandleResponse(c, resp, nil, "MF")
-}
-
-func GetSIPInstallments(c *gin.Context) {
-	sipID := c.Param("id")
-	resp, err := service.GetSIPInstallments(sipID)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
 		return
@@ -310,9 +282,29 @@ func GetPortfolio(c *gin.Context) {
 	utils.HandleResponse(c, resp, nil, "MF")
 }
 
-func GetFolioDetail(c *gin.Context) {
-	folioID := c.Param("id")
-	resp, err := service.GetFolioDetail(folioID)
+func GetSchemeWiseReturns(c *gin.Context) {
+	uid := getUID(c)
+	fpData, err := service.GetUserFPData(uid)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
+		return
+	}
+	resp, err := service.GetSchemeWiseReturns(fpData)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
+		return
+	}
+	utils.HandleResponse(c, resp, nil, "MF")
+}
+
+func GetInvestmentAccountReturns(c *gin.Context) {
+	uid := getUID(c)
+	fpData, err := service.GetUserFPData(uid)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
+		return
+	}
+	resp, err := service.GetInvestmentAccountReturns(fpData)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
 		return

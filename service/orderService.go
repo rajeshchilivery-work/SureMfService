@@ -7,6 +7,7 @@ import (
 	"SureMFService/structs"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -19,9 +20,7 @@ func PlacePurchaseOrder(uid string, fpData *structs.UserFPData, req structs.Purc
 		MFInvestmentAccount: fpData.FpInvestmentAccountID,
 		SchemeID:            req.SchemeID,
 		Amount:              req.Amount,
-		FolioNumber:         req.FolioNumber,
 		UserIP:              userIP,
-		Gateway:             "ondc",
 	})
 	if err != nil {
 		return nil, err
@@ -45,12 +44,11 @@ func PlaceSIPOrder(uid string, fpData *structs.UserFPData, req structs.SIPOrderR
 		Systematic:               true,
 		UserIP:                   userIP,
 		AutoGenerateInstallments: true,
-		FolioNumber:              req.FolioNumber,
 		NumberOfInstallments:     req.NumberOfInstallments,
 	}
-	if req.MandateID != "" {
+	if req.MandateID != 0 {
 		fpReq.PaymentMethod = "mandate"
-		fpReq.PaymentSource = req.MandateID
+		fpReq.PaymentSource = strconv.Itoa(req.MandateID)
 	}
 
 	fpResp, err := FPCreateSIPOrder(fpReq)
@@ -86,17 +84,6 @@ func PlaceRedemptionOrder(uid string, fpData *structs.UserFPData, req structs.Re
 
 	logMfEvent(uid, "redemption_order_created", fpResp.ID, req.SchemeID, req.Amount, req.Units, nil)
 	return fpResp, nil
-}
-
-func ConfirmOrderOTP(uid, orderID, orderType, otp string) error {
-	if err := FPConfirmOTP(orderType, orderID, otp); err != nil {
-		// Update otp_activity as failed
-		updateOtpActivity(orderID, "failed", "")
-		return err
-	}
-
-	updateOtpActivity(orderID, "confirmed", "confirmed")
-	return nil
 }
 
 func GetUserOrders(fpData *structs.UserFPData) ([]json.RawMessage, error) {
@@ -183,16 +170,19 @@ func GetPurchaseStatus(uid, purchaseID string) (*structs.FPOrderResponse, error)
 	return fpResp, nil
 }
 
-func GetHoldings(folio string) (*structs.FPHoldingsResponse, error) {
-	b, err := FPGetHoldings(folio)
+func GetHoldings(fpData *structs.UserFPData) (json.RawMessage, error) {
+	if fpData.FpInvestmentAccountID == "" {
+		return json.RawMessage("{}"), nil
+	}
+	account, err := FPGetMFInvestmentAccount(fpData.FpInvestmentAccountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch investment account: %w", err)
+	}
+	b, err := FPGetHoldings(account.OldID)
 	if err != nil {
 		return nil, err
 	}
-	var holdings structs.FPHoldingsResponse
-	if err := json.Unmarshal(b, &holdings); err != nil {
-		return nil, fmt.Errorf("failed to parse holdings response: %w", err)
-	}
-	return &holdings, nil
+	return json.RawMessage(b), nil
 }
 
 // ---- SIP Lifecycle ----
@@ -244,10 +234,6 @@ func ListSIPs(fpData *structs.UserFPData) ([]structs.FPSIPDetailResponse, error)
 	return FPListSIPs(fpData.FpInvestmentAccountID)
 }
 
-func GetSIPInstallments(sipID string) (*structs.FPSIPInstallmentResponse, error) {
-	return FPGetSIPInstallments(sipID)
-}
-
 // ---- Redemption Lifecycle ----
 
 func ConfirmRedemption(uid, redemptionID string, fpData *structs.UserFPData) (*structs.FPRedemptionDetailResponse, error) {
@@ -297,8 +283,26 @@ func GetPortfolio(fpData *structs.UserFPData) (*structs.FPFolioListResponse, err
 	return FPGetFolios(fpData.FpInvestmentAccountID)
 }
 
-func GetFolioDetail(folioID string) (*structs.FPFolio, error) {
-	return FPGetFolioDetail(folioID)
+func GetSchemeWiseReturns(fpData *structs.UserFPData) (json.RawMessage, error) {
+	if fpData.FpInvestmentAccountID == "" {
+		return json.RawMessage("{}"), nil
+	}
+	b, err := FPGetSchemeWiseReturns(fpData.FpInvestmentAccountID)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(b), nil
+}
+
+func GetInvestmentAccountReturns(fpData *structs.UserFPData) (json.RawMessage, error) {
+	if fpData.FpInvestmentAccountID == "" {
+		return json.RawMessage("{}"), nil
+	}
+	b, err := FPGetInvestmentAccountReturns(fpData.FpInvestmentAccountID)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(b), nil
 }
 
 // ---- Internal helpers ----
@@ -353,18 +357,3 @@ func logMfEvent(uid, eventType, fpEntityID, isin string, amount, units float64, 
 	_ = repository.CreateMfEvent(event)
 }
 
-func updateOtpActivity(fpOrderID, status, orderState string) {
-	otp, err := repository.GetOtpActivityByFpOrderID(fpOrderID)
-	if err != nil {
-		return
-	}
-	otp.Status = status
-	if orderState != "" {
-		otp.ResultingOrderState = strPtr(orderState)
-	}
-	now := time.Now()
-	if status == "confirmed" {
-		otp.ConfirmedAt = &now
-	}
-	_ = repository.UpdateOtpActivity(otp)
-}

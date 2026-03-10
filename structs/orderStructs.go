@@ -1,9 +1,8 @@
 package structs
 
 type PurchaseOrderRequest struct {
-	SchemeID    string  `json:"scheme_id" binding:"required"`
-	Amount      float64 `json:"amount" binding:"required"`
-	FolioNumber string  `json:"folio_number"`
+	SchemeID string  `json:"scheme_id" binding:"required"`
+	Amount   float64 `json:"amount" binding:"required"`
 }
 
 type SIPOrderRequest struct {
@@ -12,9 +11,8 @@ type SIPOrderRequest struct {
 	Frequency            string  `json:"frequency" binding:"required"`
 	SIPDate              int     `json:"sip_date" binding:"required"`
 	NumberOfInstallments int     `json:"number_of_installments"`
-	MandateID            string  `json:"mandate_id"`
-	FolioNumber          string  `json:"folio_number"`
-	Email                string  `json:"email"`
+	MandateID int    `json:"mandate_id"`
+	Email     string `json:"email"`
 	Mobile               string  `json:"mobile"`
 }
 
@@ -24,10 +22,6 @@ type RedemptionOrderRequest struct {
 	Amount      float64 `json:"amount"`
 	Units       float64 `json:"units"`
 	RedeemAll   bool    `json:"redeem_all"`
-}
-
-type ConfirmOTPRequest struct {
-	OTP string `json:"otp" binding:"required"`
 }
 
 type OrderResponse struct {

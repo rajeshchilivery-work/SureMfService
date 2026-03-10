@@ -27,8 +27,9 @@ FP API wrappers (fpService.go, fpPoaService.go)
 | `service/fpService.go` | FP Tenant API wrappers (investor, orders, payments, SIP, redemption, portfolio, mandates) |
 | `service/fpPoaService.go` | FP POA API wrappers (KYC pre-verification, bank penny drop) |
 | `service/onboardingService.go` | Onboarding flow: KYC, profile, contacts, bank, nominee, activation |
-| `service/orderService.go` | Order flows: purchase, SIP, redemption, OTP, consent, payment, portfolio, cancel |
+| `service/orderService.go` | Order flows: purchase, SIP, redemption, consent, payment, portfolio, cancel |
 | `service/mandateService.go` | Mandate CRUD: create, authorize, list, status, cancel |
+| `service/creditService.go` | EMI ROI delta: compare current vs market loan rates |
 | `database/cloudsql/repository/MfEventsRepo.go` | Event logging + terminal event dedup guard |
 | `database/firebase/connection.go` | Firebase init + `SetDocFields()` / `GetDoc()` helpers |
 | `database/cloudsql/connection.go` | PostgreSQL (GORM) connection setup |
@@ -56,6 +57,10 @@ Stores all FP resource IDs created during onboarding. Written incrementally as e
 | `fp_investment_account_id` | string | Account activation |
 | `onboarding_step` | int | Progress tracker (1-4) |
 | `is_activated` | bool | `true` after activation |
+
+#### `creditData/{uid}`
+
+Retail account data including loans and credit cards. Read-only — written by credit report service. Contains `FirebaseRetailAccount` struct with `LN` (loans) and `CC` (credit cards) arrays.
 
 #### `users/{uid}`
 
@@ -115,6 +120,25 @@ Email OTP verification tracking.
 | `expires_at` | timestamp | Token expiry |
 | `verified_at` | timestamp | When verified |
 
+#### `sure_credit_report.credit_details` (read-only)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | bigserial | PK |
+| `user_id` | integer | FK to `sure_user.users.id` |
+| `score` | bigint | Credit score |
+
+#### `sure_credit_report.interest_rates_v2` (read-only)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | bigserial | PK |
+| `min_score` | bigint | Minimum credit score range |
+| `max_score` | bigint | Maximum credit score range |
+| `market_rate` | numeric | Market interest rate |
+| `account_type_id` | bigint | 2=Home Loan, 3=HL Top Up, 4=LAP, 5=Personal Loan |
+| `is_active` | boolean | Active rate flag |
+
 #### `sure_mf.mf_events`
 
 Audit trail for all order and mandate events.
@@ -164,7 +188,6 @@ Base: `https://s.finprim.com`
 | `FPCreatePurchaseOrder` | POST | `/v2/mf_purchases` | |
 | `FPCreateSIPOrder` | POST | `/v2/mf_purchase_plans` | `systematic: true` required |
 | `FPCreateRedemptionOrder` | POST | `/v2/mf_redemptions` | |
-| `FPConfirmOTP` | POST | `/v2/{endpoint}/{id}/otp` | Endpoint varies by order type |
 | `FPUpdatePurchaseConsent` | PATCH | `/v2/mf_purchases` | Consent with email + mobile |
 | `FPConfirmSIP` | PATCH | `/v2/mf_purchase_plans` | State + consent |
 | `FPConfirmRedemption` | PATCH | `/v2/mf_redemptions` | State + consent |
@@ -172,23 +195,23 @@ Base: `https://s.finprim.com`
 | `FPGetPurchaseOrder` | GET | `/v2/mf_purchases/{id}` | |
 | `FPGetSIPDetail` | GET | `/v2/mf_purchase_plans/{id}` | |
 | `FPGetRedemption` | GET | `/v2/mf_redemptions/{id}` | |
-| `FPGetSIPInstallments` | GET | `/v2/mf_purchase_installments?mf_purchase_plan={id}` | |
 | `FPListSIPs` | GET | `/v2/mf_purchase_plans?mf_investment_account={id}` | |
 | `FPListRedemptions` | GET | `/v2/mf_redemptions?mf_investment_account={id}` | |
 | `FPGetFolios` | GET | `/v2/mf_folios?mf_investment_account={id}` | v2 portfolio API |
-| `FPGetFolioDetail` | GET | `/v2/mf_folios/{id}` | |
+| `FPGetSchemeWiseReturns` | POST | `/v2/transactions/reports/scheme_wise_returns` | Body: `{mf_investment_account}` |
+| `FPGetInvestmentAccountReturns` | POST | `/v2/transactions/reports/investment_account_wise_returns` | Body: `{mf_investment_account}` |
 | `FPGetBankAccount` | GET | `/v2/bank_accounts/{id}` | Fetches `old_id` for payments |
 | `FPGetPhone` | GET | `/v2/phone_numbers/{id}` | Auto-consent: fetch phone number |
 | `FPGetEmail` | GET | `/v2/email_addresses/{id}` | Auto-consent: fetch email |
 | `FPGetMFInvestmentAccount` | GET | `/v2/mf_investment_accounts/{id}` | Fetch account details |
 | `FPCancelSIP` | POST | `/v2/mf_purchase_plans/cancel` | Body: `{id, cancellation_code}` |
 | `FPGetMandate` | GET | `/api/pg/mandates/{id}` | Single mandate status |
-| `FPGetHoldings` | GET | `/api/oms/reports/holdings?folios={folio}` | Legacy OMS API |
+| `FPGetHoldings` | GET | `/api/oms/reports/holdings?investment_account_id={old_id}` | Uses investment account `old_id` (integer) |
 | `FPListFundSchemes` | GET | `/api/oms/fund_schemes` | |
 | `FPCreatePayment` | POST | `/api/pg/payments/netbanking` | Uses `old_id` integers |
 | `FPCreateMandate` | POST | `/api/pg/mandates` | |
 | `FPAuthorizeMandate` | POST | `/api/pg/payments/emandate/auth` | Returns `token_url` |
-| `FPListMandates` | GET | `/api/pg/mandates?mf_investment_account={id}` | |
+| `FPListMandates` | GET | `/api/pg/mandates?bank_account_id={old_id}` | Uses bank account `old_id` (integer) |
 | `FPCancelMandate` | POST | `/api/pg/mandates/{id}/cancel` | |
 
 ### FP POA API (`FP_POA_BASE_URL`)
@@ -213,7 +236,7 @@ accepted → failed
 
 **Purchase order:**
 ```
-pending → confirmed (OTP) → payment_pending → payment_done → submitted → successful
+pending → confirmed (consent + state) → payment_pending → payment_done → submitted → successful
 ```
 
 **SIP (purchase plan):**

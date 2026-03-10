@@ -15,7 +15,6 @@ func orderRoutes(rg *gin.RouterGroup) {
 
 		// Lumpsum purchase
 		orders.POST("/purchase", controller.PlacePurchaseOrder)
-		orders.POST("/:id/confirm-otp", controller.ConfirmOTP)
 		orders.PATCH("/:id/consent", controller.UpdateConsent)
 		orders.POST("/:id/payment", controller.CreatePayment)
 		orders.PATCH("/:id/confirm", controller.ConfirmPurchaseState)
@@ -26,7 +25,6 @@ func orderRoutes(rg *gin.RouterGroup) {
 		orders.GET("/sips", controller.ListSIPs)
 		orders.GET("/sips/:id", controller.GetSIPDetail)
 		orders.PATCH("/sips/:id/confirm", controller.ConfirmSIP)
-		orders.GET("/sips/:id/installments", controller.GetSIPInstallments)
 		orders.POST("/sips/:id/cancel", controller.CancelSIP)
 
 		// Redemption lifecycle

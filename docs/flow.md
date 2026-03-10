@@ -34,7 +34,6 @@ Base URL: `http://localhost:9113/sure-mf`
 |--------|------|-------------|
 | GET | `/` | List all orders |
 | POST | `/purchase` | Create lumpsum purchase |
-| POST | `/:id/confirm-otp` | Confirm order OTP |
 | PATCH | `/:id/consent` | Update purchase consent |
 | POST | `/:id/payment` | Create payment (get token_url) |
 | PATCH | `/:id/confirm` | Confirm purchase state |
@@ -43,7 +42,6 @@ Base URL: `http://localhost:9113/sure-mf`
 | GET | `/sips` | List all SIPs |
 | GET | `/sips/:id` | Get SIP detail |
 | PATCH | `/sips/:id/confirm` | Confirm SIP with consent |
-| GET | `/sips/:id/installments` | List SIP installments |
 | POST | `/sips/:id/cancel` | Cancel SIP |
 | POST | `/redemption` | Create redemption |
 | GET | `/redemptions` | List all redemptions |
@@ -55,13 +53,19 @@ Base URL: `http://localhost:9113/sure-mf`
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/` | Get all folios (v2 API) |
-| GET | `/:id` | Get folio detail |
 
 ### Holdings — `/:uid/holdings`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/?folio=XXX` | Get holdings by folio (legacy OMS API) |
+| GET | `/` | Get holdings (resolved server-side via old_id) |
+
+### Reports — `/:uid/reports`
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/scheme-returns` | Scheme-wise PnL/returns |
+| GET | `/account-returns` | Account-level PnL summary |
 
 ### Mandates — `/:uid/mandates`
 
@@ -72,6 +76,12 @@ Base URL: `http://localhost:9113/sure-mf`
 | GET | `/` | List mandates |
 | GET | `/:id` | Get mandate status |
 | POST | `/:id/cancel` | Cancel mandate |
+
+### Credit — `/:uid/credit`
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/emi-roi-delta` | Compare current vs market EMI/ROI for eligible loans |
 
 ---
 
@@ -118,12 +128,9 @@ Returns the user's current FP ID mappings and onboarding progress.
 
 ### `POST /kyc-check`
 
-Verifies PAN identity against NSDL via FP POA. Name + DOB auto-fetched from PostgreSQL.
+Verifies PAN identity against NSDL via FP POA. PAN, name, and DOB are all auto-fetched from PostgreSQL `sure_user.users`.
 
-**Body:**
-```json
-{ "pan": "ABCDE1234F" }
-```
+No request body required.
 
 **Response:**
 ```json
@@ -315,28 +322,17 @@ Creates and configures the MF investment account.
 }
 ```
 
-**FP API:** `POST /v2/mf_purchases` with `mf_investment_account`, `scheme`, `amount`, `user_ip`, `gateway: "ondc"`
+**FP API:** `POST /v2/mf_purchases` with `mf_investment_account`, `scheme`, `amount`, `user_ip`
 
 **Response:** FP order response with `id`, `state: "pending"`
 
-### Step 2: `POST /:uid/orders/:id/confirm-otp`
-
-**Query params:** `?type=purchase|sip|redemption` (defaults to `purchase`)
-
-**Body:**
-```json
-{ "otp": "123456" }
-```
-
-**FP API:** `POST /v2/mf_purchases/{id}/otp`
-
-### Step 3: `PATCH /:uid/orders/:id/consent`
+### Step 2: `PATCH /:uid/orders/:id/consent`
 
 No request body required. Email and phone are auto-fetched from FP using stored `fp_phone_id` and `fp_email_id`.
 
 **FP API:** `PATCH /v2/mf_purchases` with `id`, `consent: {email, isd_code: "91", mobile}`
 
-### Step 4: `POST /:uid/orders/:id/payment`
+### Step 3: `POST /:uid/orders/:id/payment`
 
 **Body:**
 ```json
@@ -357,27 +353,27 @@ Server fetches `old_id` from FP for both purchase order and bank account.
 }
 ```
 
-### Step 5: `PATCH /:uid/orders/:id/confirm`
+### Step 4: `PATCH /:uid/orders/:id/confirm`
 
 Sets `state: "confirmed"` which enables the payment link.
 
 **FP API:** `PATCH /v2/mf_purchases` with `id`, `state: "confirmed"`
 
-### Step 6: User completes payment
+### Step 5: User completes payment
 
 Open `token_url` in browser/webview. FP processes: `submitted` -> `successful`
 
-### Step 7: `GET /:uid/orders/:id/status`
+### Step 6: `GET /:uid/orders/:id/status`
 
 Poll until `state` is `"successful"` or `"failed"`.
 
 **FP API:** `GET /v2/mf_purchases/{id}`
 
-### Step 8: `GET /:uid/holdings?folio=XXX`
+### Step 7: `GET /:uid/holdings`
 
-View holdings after settlement (T+1 or T+2).
+View holdings after settlement (T+1 or T+2). No params needed — investment account old_id resolved server-side.
 
-**FP API:** `GET /api/oms/reports/holdings?folios={folio}`
+**FP API:** `GET /v2/mf_investment_accounts/{mfia_id}` (fetch old_id) → `GET /api/oms/reports/holdings?investment_account_id={old_id}`
 
 **Response:**
 ```json
@@ -457,28 +453,6 @@ No request body required. Email and phone are auto-fetched from FP using stored 
   "payment_source": "mnd_xxx"
 }
 ```
-
-### `GET /:uid/orders/sips/:id/installments` — Get Installments
-
-**FP API:** `GET /v2/mf_purchase_installments?mf_purchase_plan={id}`
-
-**Response:**
-```json
-{
-  "data": [
-    {
-      "id": "mfpi_xxx",
-      "state": "successful",
-      "amount": 1000,
-      "mf_purchase_plan": "mfpp_xxx",
-      "scheduled_on": "2026-03-05",
-      "executed_at": "2026-03-05T10:00:00Z"
-    }
-  ]
-}
-```
-
-**Installment states:** `pending`, `submitted`, `successful`, `failed`, `skipped`
 
 ### `POST /:uid/orders/sips/:id/cancel` — Cancel SIP
 
@@ -579,10 +553,6 @@ No request body required. Email and phone are auto-fetched from FP using stored 
 
 > `holdings` object is only present if units exist. New users may have empty folios.
 
-### `GET /:uid/portfolio/:id` — Get Folio Detail
-
-**FP API:** `GET /v2/mf_folios/{id}`
-
 ---
 
 ## Mandate Flow
@@ -636,7 +606,7 @@ Server fetches bank account `old_id` from FP.
 
 ### `GET /:uid/mandates` — List Mandates
 
-**FP API:** `GET /api/pg/mandates?mf_investment_account={mfia_id}`
+**FP API:** `GET /v2/bank_accounts/{fp_bank_account_id}` (fetch old_id) → `GET /api/pg/mandates?bank_account_id={old_id}`
 
 **Response:**
 ```json
@@ -708,7 +678,6 @@ Every transaction lifecycle is logged to `sure_mf.mf_events` across 4 phases:
 | **PostgreSQL `sure_user.users`** | User master data (name, PAN, DOB, phone, email, gender) | Read-only — source of truth for KYC & profile creation |
 | **PostgreSQL `sure_mf.pre_verification_usage`** | KYC & bank penny-drop verification tracking | Create, read, update |
 | **PostgreSQL `sure_mf.mf_events`** | Audit trail for all order/mandate lifecycle events | Create, read (dedup check) |
-| **PostgreSQL `sure_mf.otp_activity`** | OTP confirmation lifecycle tracking | Read, update |
 
 ---
 
@@ -815,14 +784,6 @@ Every transaction lifecycle is logged to `sure_mf.mf_events` across 4 phases:
 | 1 | FP API | — | `POST /v2/mf_purchases` |
 | 2 | **Create** | PG `sure_mf.mf_events` | `event_type='purchase_order_created', fp_entity_id, isin=scheme_id, amount` |
 
-#### `POST /orders/:id/confirm-otp`
-
-| # | Operation | Store | Details |
-|---|-----------|-------|---------|
-| 1 | FP API | — | `POST /v2/mf_purchases/{id}/otp` (or sip/redemption variant) |
-| 2 | **Read** | PG `sure_mf.otp_activity` | `WHERE fp_order_id=? ORDER BY initiated_at DESC` |
-| 3 | **Update** | PG `sure_mf.otp_activity` | `status='confirmed'/'failed', resulting_order_state, confirmed_at` |
-
 #### `PATCH /orders/:id/consent`
 
 | # | Operation | Store | Details |
@@ -896,10 +857,6 @@ Every transaction lifecycle is logged to `sure_mf.mf_events` across 4 phases:
 
 > FP API only — no DB operations.
 
-#### `GET /orders/sips/:id/installments`
-
-> FP API only — no DB operations.
-
 #### `POST /orders/sips/:id/cancel`
 
 | # | Operation | Store | Details |
@@ -940,11 +897,26 @@ Every transaction lifecycle is logged to `sure_mf.mf_events` across 4 phases:
 
 ---
 
+### Credit Endpoints
+
+#### `GET /credit/emi-roi-delta`
+
+| # | Operation | Store | Details |
+|---|-----------|-------|---------|
+| 1 | **Read** | PG `sure_user.users` | Fetch user ID (`WHERE uuid=?`) |
+| 2 | **Read** | PG `sure_credit_report.credit_details` | Fetch credit score (`WHERE user_id=?`) |
+| 3 | **Read** | Firestore `creditData/{uid}` | Fetch retail account with loan details |
+| 4 | **Read** | PG `sure_credit_report.interest_rates_v2` | For each loan (ATI 2/3/4): get market rate (`WHERE account_type_id=? AND min_score<=? AND max_score>=? AND is_active=true`) |
+
+> No write operations. Pure read-only aggregation across PostgreSQL and Firebase.
+
+---
+
 ### Portfolio & Holdings Endpoints
 
-#### `GET /portfolio`, `GET /portfolio/:id`, `GET /holdings`
+#### `GET /portfolio`, `GET /holdings`, `GET /reports/scheme-returns`, `GET /reports/account-returns`
 
-> FP API only — no DB operations. Controller reads `fpData` from Firestore (via controller-level `GetUserFPData`) to get `fp_investment_account_id`.
+> FP API only — no DB operations. Controller reads `fpData` from Firestore (via controller-level `GetUserFPData`) to get `fp_investment_account_id`. Holdings also fetches investment account `old_id` via `FPGetMFInvestmentAccount`.
 
 ---
 
@@ -971,7 +943,7 @@ Every transaction lifecycle is logged to `sure_mf.mf_events` across 4 phases:
 | # | Operation | Store | Details |
 |---|-----------|-------|---------|
 | 1 | FP API | — | `GET /v2/bank_accounts/{fp_bank_account_id}` → fetch `old_id` |
-| 2 | FP API | — | `GET /api/pg/mandates?mf_investment_account={id}` |
+| 2 | FP API | — | `GET /api/pg/mandates?bank_account_id={old_id}` |
 
 > No DB write operations.
 
@@ -1023,13 +995,12 @@ Service: Firestore WRITE user_fp_mapping/{uid} (onboarding steps only)
 ### Lumpsum Purchase
 ```
 1. POST /orders/purchase        -> create order
-2. POST /orders/:id/confirm-otp -> confirm OTP
-3. PATCH /orders/:id/consent    -> update consent
-4. POST /orders/:id/payment     -> create payment (get token_url)
-5. PATCH /orders/:id/confirm    -> confirm state
-6. User completes payment via token_url
-7. GET /orders/:id/status       -> poll until successful
-8. GET /holdings?folio=XXX      -> view holdings
+2. PATCH /orders/:id/consent    -> update consent
+3. POST /orders/:id/payment     -> create payment (get token_url)
+4. PATCH /orders/:id/confirm    -> confirm state
+5. User completes payment via token_url
+6. GET /orders/:id/status       -> poll until successful
+7. GET /holdings               -> view holdings
 ```
 
 ### SIP
@@ -1040,8 +1011,7 @@ Service: Firestore WRITE user_fp_mapping/{uid} (onboarding steps only)
 4. POST /orders/sip                    -> create SIP (with mandate_id)
 5. PATCH /orders/sips/:id/confirm      -> confirm SIP (auto-consent)
 6. GET /orders/sips/:id                -> poll until active
-7. GET /orders/sips/:id/installments   -> track installments
-8. POST /orders/sips/:id/cancel        -> cancel SIP (optional)
+7. POST /orders/sips/:id/cancel        -> cancel SIP (optional)
 ```
 
 ### Redemption
@@ -1049,4 +1019,9 @@ Service: Firestore WRITE user_fp_mapping/{uid} (onboarding steps only)
 1. POST /orders/redemption                  -> create redemption
 2. PATCH /orders/redemptions/:id/confirm    -> confirm with consent
 3. GET /orders/redemptions/:id              -> poll until successful
+```
+
+### Credit
+```
+1. GET /credit/emi-roi-delta               -> compare current vs market EMI/ROI
 ```
