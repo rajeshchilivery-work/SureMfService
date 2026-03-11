@@ -87,8 +87,8 @@ func Init() {
 		MSG91AuthKey:    getEnv("MSG91_AUTH_KEY", ""),
 		MSG91TemplateID: getEnv("MSG91_TEMPLATE_ID", ""),
 
-		PaymentPostbackURL:  getEnv("PAYMENT_POSTBACK_URL", "http://localhost:9113/sure-mf/callbacks/payment"),
-		MandatePostbackURL:  getEnv("MANDATE_POSTBACK_URL", "http://localhost:9113/sure-mf/callbacks/mandate"),
+		PaymentPostbackURL:  getEnv("PAYMENT_POSTBACK_URL", "http://localhost:3000/invest/payment-callback"),
+		MandatePostbackURL:  getEnv("MANDATE_POSTBACK_URL", "http://localhost:3000/invest/mandate-callback"),
 	}
 }
 

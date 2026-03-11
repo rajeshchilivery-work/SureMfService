@@ -14,6 +14,7 @@ func orderRoutes(rg *gin.RouterGroup) {
 		orders.GET("", controller.GetOrders)
 
 		// Lumpsum purchase
+		orders.GET("/purchases", controller.ListPurchases)
 		orders.POST("/purchase", controller.PlacePurchaseOrder)
 		orders.PATCH("/:id/consent", controller.UpdateConsent)
 		orders.POST("/:id/payment", controller.CreatePayment)

@@ -34,7 +34,10 @@ FP API wrappers (fpService.go, fpPoaService.go)
 | `database/firebase/connection.go` | Firebase init + `SetDocFields()` / `GetDoc()` helpers |
 | `database/cloudsql/connection.go` | PostgreSQL (GORM) connection setup |
 | `middleware/authMiddleware.go` | Firebase Auth token verification |
-| `config/config.go` | All env vars loaded into `AppConfig` struct |
+| `middleware/corsMiddleware.go` | CORS headers for cross-origin requests |
+| `middleware/auditLogMiddleware.go` | Request/response audit logging to message queue |
+| `service/fundService.go` | Fund scheme listing and lookup by ISIN |
+| `config/config.go` | All env vars loaded into `AppConfig` struct (includes DB connection pool settings) |
 
 ---
 
@@ -207,12 +210,16 @@ Base: `https://s.finprim.com`
 | `FPCancelSIP` | POST | `/v2/mf_purchase_plans/cancel` | Body: `{id, cancellation_code}` |
 | `FPGetMandate` | GET | `/api/pg/mandates/{id}` | Single mandate status |
 | `FPGetHoldings` | GET | `/api/oms/reports/holdings?investment_account_id={old_id}` | Uses investment account `old_id` (integer) |
-| `FPListFundSchemes` | GET | `/api/oms/fund_schemes` | |
+| `FPGetFundScheme` | GET | `/api/oms/fund_schemes/{isin}` | Single fund by ISIN |
+| `FPListFundSchemes` | GET | `/api/oms/fund_schemes` | With query params (pagination, filters) |
 | `FPCreatePayment` | POST | `/api/pg/payments/netbanking` | Uses `old_id` integers |
 | `FPCreateMandate` | POST | `/api/pg/mandates` | |
 | `FPAuthorizeMandate` | POST | `/api/pg/payments/emandate/auth` | Returns `token_url` |
 | `FPListMandates` | GET | `/api/pg/mandates?bank_account_id={old_id}` | Uses bank account `old_id` (integer) |
 | `FPCancelMandate` | POST | `/api/pg/mandates/{id}/cancel` | |
+| `FPListPurchases` | GET | `/v2/mf_purchases?mf_investment_account={id}` | Lumpsum purchases only |
+| `FPListOrders` | GET | `/v2/mf_purchases` + `mf_purchase_plans` + `mf_redemptions` | Combined all order types |
+| `FPPatchNominee` | PATCH | `/v2/related_parties/{id}` | Update nominee details |
 
 ### FP POA API (`FP_POA_BASE_URL`)
 
@@ -234,10 +241,12 @@ accepted → completed (readiness.status = failed) → treated as "failed"
 accepted → failed
 ```
 
-**Purchase order:**
+**Purchase order (actual observed in sandbox):**
 ```
-pending → confirmed (consent + state) → payment_pending → payment_done → submitted → successful
+under_review → pending (auto, ~1-3s delay) → confirmed (after consent + confirm PATCH) → submitted → successful
 ```
+
+> **Important:** FP does NOT instantly transition to `pending` after creation. There is a ~1-3 second delay while the order is `under_review`. Consent calls will fail with "order is not in pending state" if called too quickly. See Race Condition Handling below.
 
 **SIP (purchase plan):**
 ```
@@ -280,6 +289,96 @@ Payment and mandate APIs use integer `old_id` instead of string IDs. The service
 - `FPGetPurchaseOrder(id)` → `resp.OldID`
 - `FPGetBankAccount(id)` → `resp.OldID`
 
+### Mandate creation requirements
+
+`FPCreateMandate` requires:
+- `provider_name: "CYBRILLAPOA"` — set by the backend
+- `bank_account_id` uses integer `old_id` fetched from FP bank account
+
+### Mandate authorize postback URL
+
+`AuthorizeMandate` constructs the postback URL with dynamic query params:
+```go
+postbackURL := fmt.Sprintf("%s?mandate_id=%d&uid=%s", config.AppConfig.MandatePostbackURL, mandateID, uid)
+```
+
+### Payment creation requirements
+
+`FPCreatePayment` requires:
+- `provider_name: "ONDC"` — **mandatory**, FP rejects without it
+- `method` must be **uppercase**: `NETBANKING` or `UPI` (backend applies `strings.ToUpper()` as safety net)
+- `payment_postback_url` includes dynamic query params: `?order_id={purchaseID}&uid={uid}` — needed by the frontend callback page
+- `amc_order_ids` and `bank_account_id` use integer `old_id` values, not string FP IDs
+
+### Race condition handling — consent retry
+
+FP takes ~1-3 seconds to transition a new purchase order from `under_review` to `pending`. The consent PATCH (`/v2/mf_purchases` with consent data) will fail with `"order is not in pending state"` if called immediately after creation.
+
+`UpdatePurchaseConsent` uses a retry loop:
+```go
+for attempt := 0; attempt < 3; attempt++ {
+    fpResp, err = FPUpdatePurchaseConsent(req)
+    if err == nil { return fpResp, nil }
+    if strings.Contains(err.Error(), "not in pending state") && attempt < 2 {
+        time.Sleep(2 * time.Second) // wait for FP state transition
+        continue
+    }
+    return nil, err
+}
+```
+
+### SIP confirm retry — review_completed
+
+`ConfirmSIP` uses a retry loop similar to purchase consent, but waits for the SIP to reach `review_completed` state:
+```go
+for attempt := 0; attempt < 3; attempt++ {
+    fpResp, err = FPConfirmSIP(req)
+    if err == nil { return fpResp, nil }
+    if strings.Contains(err.Error(), "review_completed") && attempt < 2 {
+        time.Sleep(2 * time.Second)
+        continue
+    }
+}
+```
+
+### Redemption confirm retry
+
+`ConfirmRedemption` also retries (3x, 2s delay) when FP returns "not in pending state" — same pattern as purchase consent.
+
+### "Already confirmed" graceful handling
+
+`ConfirmPurchaseState` handles the case where an order is already confirmed (e.g., from a retry or race):
+```go
+if err != nil {
+    existingOrder, getErr := FPGetPurchaseOrder(purchaseID)
+    if getErr == nil && existingOrder.State == "confirmed" {
+        // Treat as success — order is already in the desired state
+        return existingOrder, nil
+    }
+    return nil, err
+}
+```
+
+### Silent error pattern (CRITICAL)
+
+The backend returns **HTTP 200 for ALL responses**, including errors. The `CommonResponse` wrapper:
+```json
+{ "status": 500, "api-status": "error", "msg": "some error message", "data": null }
+```
+is sent with `c.JSON(http.StatusOK, ...)`. The frontend MUST check the internal `status` field, not just HTTP status. See `SureInvest/src/lib/api.ts` `request()` function which detects `json.status >= 400`.
+
+### Debug logging
+
+`fpService.go` logs raw FP responses for key operations:
+- `FPConfirmPurchaseState`: `[DEBUG] FP confirm state: status=%d body=%s`
+- `FPCreatePayment`: `[DEBUG] FP create payment: status=%d body=%s`
+- `FPGetFolios`: `[DEBUG] FP get folios: status=%d body=%s`
+- `FPGetHoldings`: `[DEBUG] FP get holdings (OMS): status=%d body=%s`
+- `FPCreateMandate`: `[DEBUG] FP create mandate: status=%d body=%s`
+- `FPAuthorizeMandate`: `[DEBUG] FP authorize mandate: status=%d body=%s`
+
+These are invaluable for diagnosing FP API failures that the backend otherwise wraps into generic error messages.
+
 ### Event logging
 
 Two helpers write to `sure_mf.mf_events`:
@@ -296,6 +395,10 @@ Two helpers write to `sure_mf.mf_events`:
 | Completed | `*_successful`, `*_failed`, `*_active`, `mandate_approved` | `logTerminalEvent` (deduped) |
 | Cancelled | `sip_cancelled`, `mandate_cancelled` | `logMfEvent` |
 
+### Scheme name enrichment
+
+List endpoints (`GetUserOrders`, `ListSIPs`, `ListRedemptions`, `ListPurchases`, `GetPortfolio`) enrich responses with `scheme_name` (and `fund_category` for portfolio) by looking up ISINs via `FPGetFundScheme`. A scheme cache deduplicates lookups for the same ISIN within a single request.
+
 ### Auto-consent
 
 `getConsentData(fpData)` fetches email and phone from FP using stored `fp_phone_id` and `fp_email_id` via `FPGetPhone` and `FPGetEmail`. Used by `UpdatePurchaseConsent`, `ConfirmSIP`, and `ConfirmRedemption` — no email/mobile needed in request body.
@@ -303,6 +406,14 @@ Two helpers write to `sure_mf.mf_events`:
 ### Firebase helpers
 
 Service layer uses `firebase.SetDocFields()` and `firebase.GetDoc()` — never imports the Firestore SDK directly. `SetDocFields` uses `MergeAll` for upsert behavior.
+
+### Audit logging middleware
+
+`AuditLogMiddleware` captures request body and response body for every request, then publishes an `AuditLog` struct to the `AUDIT_LOG` message queue via `SureCommonService/clients`. Includes: service name, endpoint URL, HTTP method, request/response bodies, user ID, IP address, timestamp.
+
+### CORS middleware
+
+`CORSMiddleware` sets `Access-Control-Allow-Origin: *` and allows `GET, POST, PUT, PATCH, DELETE, OPTIONS` methods. Handles preflight `OPTIONS` requests with 204 No Content.
 
 ### Polling
 
@@ -330,7 +441,8 @@ Without FATCA fields, FP rejects purchase/SIP orders even though profile creatio
 |----------|-------|-------|
 | KYC PAN | `ARRPP3751N` | Returns `readiness.status = ready` |
 | Bank accounts | Ending in `1195`-`1199` | Pass penny-drop verification |
-| Payment method | `netbanking` | Only method implemented |
+| Payment method | `NETBANKING` | Must be uppercase. `UPI` also supported |
+| Provider name | `ONDC` | Required in payment creation request |
 | Mandate type | `E_MANDATE` | Default; eNACH-based |
 
 ---
@@ -346,3 +458,4 @@ See [README.md](../README.md) for full list. Key groupings:
 - **FP POA**: `FP_POA_BASE_URL`, `FP_POA_AUTH_URL`, `FP_POA_CLIENT_ID`, `FP_POA_CLIENT_SECRET`
 - **MSG91**: `MSG91_AUTH_KEY`, `MSG91_TEMPLATE_ID`
 - **Callbacks**: `PAYMENT_POSTBACK_URL`, `MANDATE_POSTBACK_URL`
+- **DB Connection Pool** (optional): `DB_MAX_OPEN_CONNS` (default 100), `DB_MAX_IDLE_CONNS` (default 10), `DB_CONN_MAX_LIFETIME` (default 1h), `DB_CONN_MAX_IDLE_TIME` (default 10m)

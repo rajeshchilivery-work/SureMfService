@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"sync"
@@ -264,6 +265,18 @@ func FPListFundSchemes(params map[string]string) (*structs.FPFundSchemeListRespo
 	return &resp, json.Unmarshal(b, &resp)
 }
 
+func FPGetFundScheme(isin string) (*structs.FPFundScheme, error) {
+	b, status, err := fpRequest(http.MethodGet, "/api/oms/fund_schemes/"+isin, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 400 {
+		return nil, fmt.Errorf("fp get fund_scheme error %d: %s", status, string(b))
+	}
+	var resp structs.FPFundScheme
+	return &resp, json.Unmarshal(b, &resp)
+}
+
 // ---- Orders ----
 
 func FPCreatePurchaseOrder(req structs.FPPurchaseOrderRequest) (*structs.FPOrderResponse, error) {
@@ -316,6 +329,7 @@ func FPUpdatePurchaseConsent(req structs.FPConsentUpdateRequest) (*structs.FPOrd
 
 func FPConfirmPurchaseState(req structs.FPConfirmStateRequest) (*structs.FPOrderResponse, error) {
 	b, status, err := fpRequest(http.MethodPatch, "/v2/mf_purchases", req)
+	log.Printf("[DEBUG] FP confirm state: status=%d body=%s", status, string(b))
 	if err != nil {
 		return nil, err
 	}
@@ -328,6 +342,7 @@ func FPConfirmPurchaseState(req structs.FPConfirmStateRequest) (*structs.FPOrder
 
 func FPCreatePayment(req structs.FPCreatePaymentRequest) (*structs.FPCreatePaymentResponse, error) {
 	b, status, err := fpRequest(http.MethodPost, "/api/pg/payments/netbanking", req)
+	log.Printf("[DEBUG] FP create payment: status=%d body=%s", status, string(b))
 	if err != nil {
 		return nil, err
 	}
@@ -365,6 +380,7 @@ func FPGetBankAccount(bankAccountID string) (*structs.FPBankAccountResponse, err
 func FPGetHoldings(investmentAccountOldID int) ([]byte, error) {
 	path := fmt.Sprintf("/api/oms/reports/holdings?investment_account_id=%d", investmentAccountOldID)
 	b, status, err := fpRequest(http.MethodGet, path, nil)
+	log.Printf("[DEBUG] FP get holdings (OMS): status=%d body=%s", status, string(b))
 	if err != nil {
 		return nil, err
 	}
@@ -483,6 +499,7 @@ func FPListRedemptions(investmentAccountID string) ([]structs.FPRedemptionDetail
 func FPGetFolios(investmentAccountID string) (*structs.FPFolioListResponse, error) {
 	path := "/v2/mf_folios?mf_investment_account=" + investmentAccountID
 	b, status, err := fpRequest(http.MethodGet, path, nil)
+	log.Printf("[DEBUG] FP get folios: status=%d body=%s", status, string(b))
 	if err != nil {
 		return nil, err
 	}
@@ -523,6 +540,7 @@ func FPGetInvestmentAccountReturns(mfiaID string) ([]byte, error) {
 
 func FPCreateMandate(req structs.FPCreateMandateRequest) (*structs.FPMandateResponse, error) {
 	b, status, err := fpRequest(http.MethodPost, "/api/pg/mandates", req)
+	log.Printf("[DEBUG] FP create mandate: status=%d body=%s", status, string(b))
 	if err != nil {
 		return nil, err
 	}
@@ -535,6 +553,7 @@ func FPCreateMandate(req structs.FPCreateMandateRequest) (*structs.FPMandateResp
 
 func FPAuthorizeMandate(req structs.FPMandateAuthRequest) (*structs.FPMandateAuthResponse, error) {
 	b, status, err := fpRequest(http.MethodPost, "/api/pg/payments/emandate/auth", req)
+	log.Printf("[DEBUG] FP authorize mandate: status=%d body=%s", status, string(b))
 	if err != nil {
 		return nil, err
 	}
@@ -579,6 +598,26 @@ func FPCancelMandate(mandateID string) error {
 		return fmt.Errorf("fp cancel mandate error %d: %s", status, string(b))
 	}
 	return nil
+}
+
+// ---- Purchase Orders (lumpsum only) ----
+
+func FPListPurchases(investmentAccountID string) ([]structs.FPOrderResponse, error) {
+	path := "/v2/mf_purchases?mf_investment_account=" + investmentAccountID
+	b, status, err := fpRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 400 {
+		return nil, fmt.Errorf("fp list purchases error %d: %s", status, string(b))
+	}
+	var resp struct {
+		Data []structs.FPOrderResponse `json:"data"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
 }
 
 // ---- All Orders (combined list) ----

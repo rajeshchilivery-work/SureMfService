@@ -20,6 +20,13 @@ List mutual fund schemes. No auth required.
 
 ---
 
+### `GET /funds/:isin`
+Get fund details by ISIN. No auth required.
+
+**FP API:** `GET /api/oms/fund_schemes/{isin}`
+
+---
+
 ## Callbacks (no auth)
 
 ### `GET|POST /callbacks/payment`
@@ -100,7 +107,7 @@ Poll pre-verification status. No request body.
 ---
 
 ### `POST /phone`
-No request body. Phone number auto-fetched from PostgreSQL.
+No request body. Phone number auto-fetched from PostgreSQL `sure_user.users`.
 
 **FP API:** `POST /v2/phone_numbers`
 ```json
@@ -114,7 +121,7 @@ No request body. Phone number auto-fetched from PostgreSQL.
 ---
 
 ### `POST /email`
-No request body. Email auto-fetched from PostgreSQL.
+No request body. Email auto-fetched from PostgreSQL `sure_user.users`.
 
 **FP API:** `POST /v2/email_addresses`
 ```json
@@ -290,11 +297,20 @@ No request body. Email auto-fetched from PostgreSQL.
 ## Lumpsum Purchase — `/:uid/orders`
 
 ### `GET /`
-List all orders (purchases + SIPs + redemptions).
+List all orders (purchases + SIPs + redemptions). Enriched with `scheme_name` from FP fund scheme lookup.
 
 No request body.
 
 **FP API:** `GET /v2/mf_purchases`, `/v2/mf_purchase_plans`, `/v2/mf_redemptions` (all with `?mf_investment_account={mfia_id}`)
+
+---
+
+### `GET /purchases`
+List lumpsum purchase orders only. Enriched with `scheme_name`.
+
+No request body.
+
+**FP API:** `GET /v2/mf_purchases?mf_investment_account={mfia_id}`
 
 ---
 
@@ -344,21 +360,24 @@ No request body. Email and phone auto-fetched from FP.
 { "method": "NETBANKING" }
 ```
 
-> Valid: `NETBANKING`, `UPI`
+> Valid: `NETBANKING`, `UPI` — **must be uppercase**. Backend also applies `strings.ToUpper()` as a safety net.
 
 **FP API:** `POST /api/pg/payments/netbanking`
 ```json
 {
   "amc_order_ids": [12345],
   "method": "NETBANKING",
-  "payment_postback_url": "http://localhost:9113/sure-mf/callbacks/payment",
-  "bank_account_id": 131
+  "payment_postback_url": "http://localhost:3000/invest/payment-callback?order_id=mfp_xxx&uid=firebase_uid",
+  "bank_account_id": 131,
+  "provider_name": "ONDC"
 }
 ```
 
 > `amc_order_ids` and `bank_account_id` use integer `old_id` values fetched from FP.
+> `provider_name: "ONDC"` is **required** — FP rejects payments without it.
+> `payment_postback_url` includes `order_id` and `uid` query params so the callback page can fetch order details.
 
-**Response includes `token_url`** — open in browser for payment.
+**Response includes `token_url`** — open in browser for payment. Format: `https://sure.s.finprim.com/api/pg/payments/netbanking/ondc?txnId=...`
 
 ---
 
@@ -449,7 +468,7 @@ No request body. Auto-consent with email + phone.
 ---
 
 ### `GET /sips`
-List all SIPs. No request body.
+List all SIPs. No request body. Enriched with `scheme_name`.
 
 **FP API:** `GET /v2/mf_purchase_plans?mf_investment_account={mfia_id}`
 
@@ -546,7 +565,7 @@ No request body. Auto-consent with email + phone.
 ---
 
 ### `GET /redemptions`
-List all redemptions. No request body.
+List all redemptions. No request body. Enriched with `scheme_name`.
 
 **FP API:** `GET /v2/mf_redemptions?mf_investment_account={mfia_id}`
 
@@ -624,11 +643,13 @@ Get investment account-level PnL summary. No request body.
 {
   "bank_account_id": 131,
   "mandate_type": "E_MANDATE",
-  "mandate_limit": 50000
+  "mandate_limit": 50000,
+  "provider_name": "CYBRILLAPOA"
 }
 ```
 
 > `bank_account_id` is the integer `old_id` fetched from FP bank account.
+> `provider_name: "CYBRILLAPOA"` is set by the backend.
 
 ---
 
@@ -643,7 +664,7 @@ Get investment account-level PnL summary. No request body.
 ```json
 {
   "mandate_id": 53,
-  "payment_postback_url": "http://localhost:9113/sure-mf/callbacks/mandate"
+  "payment_postback_url": "http://localhost:3000/invest/mandate-callback?mandate_id=53&uid=firebase_uid"
 }
 ```
 

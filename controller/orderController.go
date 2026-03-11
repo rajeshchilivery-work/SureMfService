@@ -250,6 +250,21 @@ func GetRedemptionDetail(c *gin.Context) {
 	utils.HandleResponse(c, resp, nil, "MF")
 }
 
+func ListPurchases(c *gin.Context) {
+	uid := getUID(c)
+	fpData, err := service.GetUserFPData(uid)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
+		return
+	}
+	resp, err := service.ListPurchases(fpData)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": 500, "msg": err.Error()})
+		return
+	}
+	utils.HandleResponse(c, resp, nil, "MF")
+}
+
 func ListRedemptions(c *gin.Context) {
 	uid := getUID(c)
 	fpData, err := service.GetUserFPData(uid)

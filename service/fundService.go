@@ -5,6 +5,10 @@ import (
 	"fmt"
 )
 
+func GetFundByISIN(isin string) (*structs.FPFundScheme, error) {
+	return FPGetFundScheme(isin)
+}
+
 func ListFunds(investmentOption, planType, amcID string, page, size int) (*structs.FPFundSchemeListResponse, error) {
 	params := map[string]string{
 		"investment_option": investmentOption,

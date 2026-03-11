@@ -28,6 +28,7 @@ func main() {
 	}
 
 	router := gin.Default()
+	router.Use(middleware.CORSMiddleware())
 	router.Use(middleware.AuditLogMiddleware())
 	routes.Routes(router)
 

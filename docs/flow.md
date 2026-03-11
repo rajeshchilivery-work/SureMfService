@@ -12,6 +12,14 @@ Base URL: `http://localhost:9113/sure-mf`
 |--------|------|-------------|
 | GET | `/ping` | Health check |
 | GET | `/funds` | List MF schemes |
+| GET | `/funds/:isin` | Get fund details by ISIN |
+
+### Callbacks (no auth)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET/POST | `/callbacks/payment` | Payment postback from FP |
+| GET/POST | `/callbacks/mandate` | Mandate postback from FP |
 
 ### Onboarding — `/:uid/onboarding`
 
@@ -21,8 +29,8 @@ Base URL: `http://localhost:9113/sure-mf`
 | POST | `/kyc-check` | Verify PAN identity |
 | GET | `/pre-verification/:fp_id` | Poll pre-verification status |
 | POST | `/investor-profile` | Create investor profile |
-| POST | `/phone` | Add phone number |
-| POST | `/email` | Add email |
+| POST | `/phone` | Add phone (auto-fetched from PG) |
+| POST | `/email` | Add email (auto-fetched from PG) |
 | POST | `/address` | Add address |
 | POST | `/bank` | Add bank account + penny drop |
 | POST | `/nominee` | Add nominee |
@@ -33,6 +41,7 @@ Base URL: `http://localhost:9113/sure-mf`
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/` | List all orders |
+| GET | `/purchases` | List lumpsum purchases |
 | POST | `/purchase` | Create lumpsum purchase |
 | PATCH | `/:id/consent` | Update purchase consent |
 | POST | `/:id/payment` | Create payment (get token_url) |
@@ -96,7 +105,7 @@ All user-scoped endpoints use the Firebase UID as a path parameter:
 /sure-mf/:uid/mandates/...
 ```
 
-The frontend must include the authenticated user's Firebase UID in the URL. No `Authorization` header is required.
+The frontend must include the authenticated user's Firebase UID in the URL and a Firebase Auth token in the `Authorization` header. User-scoped routes are protected by `AuthMiddleware` which verifies the token and extracts the UID. Public routes (`/ping`, `/funds`) and callback routes (`/callbacks/*`) do not require auth.
 
 ### Polling Pattern (KYC / Bank Verify)
 
@@ -178,10 +187,7 @@ Creates investor profile in FP. `pan`, `name`, `gender`, `date_of_birth` auto-fe
 
 ### `POST /phone`
 
-**Body:**
-```json
-{ "number": "9876543210", "belongs_to": "self" }
-```
+No request body required. Phone number is auto-fetched from PostgreSQL `sure_user.users`.
 
 **Response:** `{ "fp_phone_id": "phn_xxx" }`
 
@@ -189,10 +195,7 @@ Creates investor profile in FP. `pan`, `name`, `gender`, `date_of_birth` auto-fe
 
 ### `POST /email`
 
-**Body:**
-```json
-{ "email": "user@example.com", "belongs_to": "self" }
-```
+No request body required. Email is auto-fetched from PostgreSQL `sure_user.users`.
 
 **Response:** `{ "fp_email_id": "eml_xxx" }`
 
@@ -425,13 +428,15 @@ No request body required. Email and phone are auto-fetched from FP using stored 
 
 **FP API:** `PATCH /v2/mf_purchase_plans` with `id`, `state: "confirmed"`, `consent: {email, isd_code: "91", mobile}`
 
+> Has retry loop (3x with 2s delay) if FP has not yet transitioned to `review_completed` state.
+
 **Response:** SIP transitions `created` -> `confirmed` -> `active`
 
 ### `GET /:uid/orders/sips` — List SIPs
 
 **FP API:** `GET /v2/mf_purchase_plans?mf_investment_account={mfia_id}`
 
-**Response:** Array of SIP detail objects.
+**Response:** Array of SIP detail objects, enriched with `scheme_name` from FP fund scheme lookup.
 
 ### `GET /:uid/orders/sips/:id` — Get SIP Detail
 
@@ -508,6 +513,8 @@ No request body required. Email and phone are auto-fetched from FP using stored 
 
 No request body required. Email and phone are auto-fetched from FP using stored `fp_phone_id` and `fp_email_id`.
 
+> Has retry loop (3x with 2s delay) if FP order is still in `under_review` state.
+
 **FP API:** `PATCH /v2/mf_redemptions` with `id`, `state: "confirmed"`, `consent: {email, isd_code: "91", mobile}`
 
 ### `GET /:uid/orders/redemptions` — List Redemptions
@@ -553,6 +560,8 @@ No request body required. Email and phone are auto-fetched from FP using stored 
 
 > `holdings` object is only present if units exist. New users may have empty folios.
 
+> Portfolio folios are enriched with `scheme_name` and `fund_category` from FP fund scheme lookup.
+
 ---
 
 ## Mandate Flow
@@ -571,7 +580,7 @@ No request body required. Email and phone are auto-fetched from FP using stored 
 
 Server fetches bank account `old_id` from FP.
 
-**FP API:** `POST /api/pg/mandates` with `mf_investment_account`, `bank_account_id` (int old_id), `mandate_type`, `mandate_limit`
+**FP API:** `POST /api/pg/mandates` with `bank_account_id` (int old_id), `mandate_type`, `mandate_limit`, `provider_name: "CYBRILLAPOA"`
 
 **Response:**
 ```json
@@ -592,7 +601,7 @@ Server fetches bank account `old_id` from FP.
 { "mandate_id": 99999 }
 ```
 
-**FP API:** `POST /api/pg/payments/emandate/auth` with `mandate_id`, `payment_postback_url`
+**FP API:** `POST /api/pg/payments/emandate/auth` with `mandate_id`, `payment_postback_url` (includes `?mandate_id={id}&uid={uid}` query params)
 
 **Response:**
 ```json
@@ -799,16 +808,18 @@ Every transaction lifecycle is logged to `sure_mf.mf_events` across 4 phases:
 |---|-----------|-------|---------|
 | 1 | FP API | — | `GET /v2/mf_purchases/{id}` → fetch `old_id` |
 | 2 | FP API | — | `GET /v2/bank_accounts/{fp_bank_account_id}` → fetch `old_id` |
-| 3 | FP API | — | `POST /api/pg/payments/netbanking` |
+| 3 | FP API | — | `POST /api/pg/payments/netbanking` with `provider_name: "ONDC"`, uppercase method, dynamic postback URL |
 
-> No DB read/write. Returns `token_url` for payment.
+> No DB read/write. Returns `token_url` for payment. Postback URL includes `?order_id={id}&uid={uid}`.
 
 #### `PATCH /orders/:id/confirm`
 
 | # | Operation | Store | Details |
 |---|-----------|-------|---------|
-| 1 | FP API | — | `PATCH /v2/mf_purchases` (`state='confirmed'`) |
+| 1 | FP API | — | `PATCH /v2/mf_purchases` (`state='confirmed'`) — handles "already confirmed" gracefully |
 | 2 | **Create** | PG `sure_mf.mf_events` | `event_type='purchase_confirmed', fp_entity_id, isin, amount, raw_payload={state}` |
+
+> If FP returns an error, the service checks if the order is already confirmed via `FPGetPurchaseOrder`. If so, it returns success instead of an error.
 
 #### `GET /orders/:id/status`
 
@@ -824,7 +835,7 @@ Every transaction lifecycle is logged to `sure_mf.mf_events` across 4 phases:
 |---|-----------|-------|---------|
 | 1 | FP API | — | `GET /v2/mf_purchases` + `/v2/mf_purchase_plans` + `/v2/mf_redemptions` |
 
-> No DB operations. Pure FP API passthrough.
+> No DB operations. FP API passthrough. Orders are enriched with `scheme_name` from FP fund scheme lookup.
 
 ---
 
@@ -994,13 +1005,25 @@ Service: Firestore WRITE user_fp_mapping/{uid} (onboarding steps only)
 
 ### Lumpsum Purchase
 ```
-1. POST /orders/purchase        -> create order
-2. PATCH /orders/:id/consent    -> update consent
+1. POST /orders/purchase        -> create order (state: under_review → pending after ~1-3s)
+2. PATCH /orders/:id/consent    -> update consent (auto-fetches email/phone from FP)
+                                   ⚠ Has retry loop: FP may still be in under_review state
+                                   Retries 3x with 2s delay if "not in pending state"
 3. POST /orders/:id/payment     -> create payment (get token_url)
-4. PATCH /orders/:id/confirm    -> confirm state
+                                   Requires: method=NETBANKING (uppercase), provider_name=ONDC
+                                   Uses old_id integers for amc_order_ids and bank_account_id
+                                   Postback URL includes ?order_id={id}&uid={uid}
+4. PATCH /orders/:id/confirm    -> confirm state (handles "already confirmed" gracefully)
 5. User completes payment via token_url
+   → FP redirects to PAYMENT_POSTBACK_URL with order_id and uid params
+   → Frontend callback page polls order status
 6. GET /orders/:id/status       -> poll until successful
-7. GET /holdings               -> view holdings
+7. GET /holdings               -> view holdings (T+1 or T+2 settlement)
+```
+
+**FP order state machine (observed in sandbox):**
+```
+under_review → pending (~1-3s auto) → confirmed (consent + confirm) → submitted → successful
 ```
 
 ### SIP

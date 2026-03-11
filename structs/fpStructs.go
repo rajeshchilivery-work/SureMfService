@@ -320,7 +320,9 @@ type FPOrderResponse struct {
 	Amount              float64 `json:"amount,omitempty"`
 	FolioNumber         string  `json:"folio_number,omitempty"`
 	Scheme              string  `json:"scheme,omitempty"`
+	SchemeName          string  `json:"scheme_name,omitempty"`
 	MFInvestmentAccount string  `json:"mf_investment_account,omitempty"`
+	CreatedAt           string  `json:"created_at,omitempty"`
 }
 
 // ---- FP Consent Update (PATCH /v2/mf_purchases) ----
@@ -343,6 +345,7 @@ type FPCreatePaymentRequest struct {
 	Method             string `json:"method"`
 	PaymentPostbackURL string `json:"payment_postback_url"`
 	BankAccountID      int    `json:"bank_account_id"`
+	ProviderName       string `json:"provider_name,omitempty"`
 }
 
 type FPCreatePaymentResponse struct {
@@ -378,6 +381,7 @@ type FPSIPDetailResponse struct {
 	Systematic               bool    `json:"systematic"`
 	MFInvestmentAccount      string  `json:"mf_investment_account,omitempty"`
 	Scheme                   string  `json:"scheme,omitempty"`
+	SchemeName               string  `json:"scheme_name,omitempty"`
 	FolioNumber              string  `json:"folio_number,omitempty"`
 	Amount                   float64 `json:"amount,omitempty"`
 	Frequency                string  `json:"frequency,omitempty"`
@@ -407,6 +411,7 @@ type FPRedemptionDetailResponse struct {
 	State               string  `json:"state"`
 	MFInvestmentAccount string  `json:"mf_investment_account,omitempty"`
 	Scheme              string  `json:"scheme,omitempty"`
+	SchemeName          string  `json:"scheme_name,omitempty"`
 	FolioNumber         string  `json:"folio_number,omitempty"`
 	Amount              float64 `json:"amount,omitempty"`
 	Units               float64 `json:"units,omitempty"`
@@ -427,6 +432,8 @@ type FPFolio struct {
 	HoldingPattern      string          `json:"holding_pattern,omitempty"`
 	Holdings            *FPFolioHolding `json:"holdings,omitempty"`
 	PayoutDetails       []FPPayoutDetail `json:"payout_details,omitempty"`
+	SchemeName          string          `json:"scheme_name,omitempty"`
+	FundCategory        string          `json:"fund_category,omitempty"`
 }
 
 type FPFolioHolding struct {

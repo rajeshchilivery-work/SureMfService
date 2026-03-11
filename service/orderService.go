@@ -7,7 +7,9 @@ import (
 	"SureMFService/structs"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -98,7 +100,37 @@ func GetUserOrders(fpData *structs.UserFPData) ([]json.RawMessage, error) {
 	if err := json.Unmarshal(b, &orders); err != nil {
 		return nil, fmt.Errorf("failed to parse orders: %w", err)
 	}
-	return orders, nil
+
+	// Enrich orders with scheme_name by looking up ISINs
+	schemeNames := map[string]string{}
+	for _, raw := range orders {
+		var m map[string]interface{}
+		if json.Unmarshal(raw, &m) == nil {
+			if isin, ok := m["scheme"].(string); ok && isin != "" {
+				schemeNames[isin] = ""
+			}
+		}
+	}
+	for isin := range schemeNames {
+		if scheme, err := FPGetFundScheme(isin); err == nil {
+			schemeNames[isin] = scheme.Name
+		}
+	}
+	enriched := make([]json.RawMessage, 0, len(orders))
+	for _, raw := range orders {
+		var m map[string]interface{}
+		if json.Unmarshal(raw, &m) == nil {
+			if isin, ok := m["scheme"].(string); ok && schemeNames[isin] != "" {
+				m["scheme_name"] = schemeNames[isin]
+			}
+			if b, err := json.Marshal(m); err == nil {
+				enriched = append(enriched, b)
+				continue
+			}
+		}
+		enriched = append(enriched, raw)
+	}
+	return enriched, nil
 }
 
 func UpdatePurchaseConsent(uid, purchaseID string, fpData *structs.UserFPData) (*structs.FPOrderResponse, error) {
@@ -106,15 +138,25 @@ func UpdatePurchaseConsent(uid, purchaseID string, fpData *structs.UserFPData) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to get consent data: %w", err)
 	}
-	fpResp, err := FPUpdatePurchaseConsent(structs.FPConsentUpdateRequest{
-		ID:      purchaseID,
-		Consent: *consent,
-	})
-	if err != nil {
+
+	// Retry with delay — FP may take a moment to transition order from under_review to pending
+	var fpResp *structs.FPOrderResponse
+	for attempt := 0; attempt < 3; attempt++ {
+		fpResp, err = FPUpdatePurchaseConsent(structs.FPConsentUpdateRequest{
+			ID:      purchaseID,
+			Consent: *consent,
+		})
+		if err == nil {
+			return fpResp, nil
+		}
+		if strings.Contains(err.Error(), "not in pending state") && attempt < 2 {
+			log.Printf("[INFO] Order %s not yet in pending state, retrying in 2s (attempt %d)", purchaseID, attempt+1)
+			time.Sleep(2 * time.Second)
+			continue
+		}
 		return nil, err
 	}
-
-	return fpResp, nil
+	return fpResp, err
 }
 
 func CreatePayment(uid string, fpData *structs.UserFPData, purchaseID, method string) (*structs.FPCreatePaymentResponse, error) {
@@ -132,9 +174,10 @@ func CreatePayment(uid string, fpData *structs.UserFPData, purchaseID, method st
 
 	payResp, err := FPCreatePayment(structs.FPCreatePaymentRequest{
 		AMCOrderIDs:        []int{purchase.OldID},
-		Method:             method,
-		PaymentPostbackURL: config.AppConfig.PaymentPostbackURL,
+		Method:             strings.ToUpper(method),
+		PaymentPostbackURL: config.AppConfig.PaymentPostbackURL + "?order_id=" + purchaseID + "&uid=" + uid,
 		BankAccountID:      bankAccount.OldID,
+		ProviderName:       "ONDC",
 	})
 	if err != nil {
 		return nil, err
@@ -149,6 +192,14 @@ func ConfirmPurchaseState(uid, purchaseID string) (*structs.FPOrderResponse, err
 		State: "confirmed",
 	})
 	if err != nil {
+		// Handle "already confirmed" gracefully — FP may reject if order is already in confirmed state
+		existingOrder, getErr := FPGetPurchaseOrder(purchaseID)
+		if getErr == nil && existingOrder.State == "confirmed" {
+			log.Printf("[INFO] Order %s already confirmed, proceeding", purchaseID)
+			logMfEvent(uid, "purchase_confirmed", purchaseID, existingOrder.Scheme, existingOrder.Amount, 0,
+				map[string]interface{}{"state": existingOrder.State, "note": "already_confirmed"})
+			return existingOrder, nil
+		}
 		return nil, err
 	}
 
@@ -192,16 +243,27 @@ func ConfirmSIP(uid, sipID string, fpData *structs.UserFPData) (*structs.FPSIPDe
 	if err != nil {
 		return nil, fmt.Errorf("failed to get consent data: %w", err)
 	}
-	fpResp, err := FPConfirmSIP(structs.FPSIPConfirmRequest{
-		ID:    sipID,
-		State: "confirmed",
-		Consent: *consent,
-	})
-	if err != nil {
+
+	// Retry with delay — FP may take a moment to transition SIP plan to review_completed state
+	var fpResp *structs.FPSIPDetailResponse
+	for attempt := 0; attempt < 3; attempt++ {
+		fpResp, err = FPConfirmSIP(structs.FPSIPConfirmRequest{
+			ID:      sipID,
+			State:   "confirmed",
+			Consent: *consent,
+		})
+		if err == nil {
+			logMfEvent(uid, "sip_confirmed", sipID, fpResp.Scheme, fpResp.Amount, 0, map[string]interface{}{"state": fpResp.State})
+			return fpResp, nil
+		}
+		if strings.Contains(err.Error(), "review_completed") && attempt < 2 {
+			log.Printf("[INFO] SIP %s not yet in review_completed state, retrying in 2s (attempt %d)", sipID, attempt+1)
+			time.Sleep(2 * time.Second)
+			continue
+		}
 		return nil, err
 	}
-	logMfEvent(uid, "sip_confirmed", sipID, fpResp.Scheme, fpResp.Amount, 0, map[string]interface{}{"state": fpResp.State})
-	return fpResp, nil
+	return fpResp, err
 }
 
 func GetSIPDetail(uid, sipID string) (*structs.FPSIPDetailResponse, error) {
@@ -231,7 +293,29 @@ func ListSIPs(fpData *structs.UserFPData) ([]structs.FPSIPDetailResponse, error)
 	if fpData.FpInvestmentAccountID == "" {
 		return []structs.FPSIPDetailResponse{}, nil
 	}
-	return FPListSIPs(fpData.FpInvestmentAccountID)
+	sips, err := FPListSIPs(fpData.FpInvestmentAccountID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enrich with scheme_name
+	schemeNames := map[string]string{}
+	for _, s := range sips {
+		if s.Scheme != "" {
+			schemeNames[s.Scheme] = ""
+		}
+	}
+	for isin := range schemeNames {
+		if scheme, err := FPGetFundScheme(isin); err == nil {
+			schemeNames[isin] = scheme.Name
+		}
+	}
+	for i := range sips {
+		if name := schemeNames[sips[i].Scheme]; name != "" {
+			sips[i].SchemeName = name
+		}
+	}
+	return sips, nil
 }
 
 // ---- Redemption Lifecycle ----
@@ -241,16 +325,27 @@ func ConfirmRedemption(uid, redemptionID string, fpData *structs.UserFPData) (*s
 	if err != nil {
 		return nil, fmt.Errorf("failed to get consent data: %w", err)
 	}
-	fpResp, err := FPConfirmRedemption(structs.FPRedemptionConfirmRequest{
-		ID:    redemptionID,
-		State: "confirmed",
-		Consent: *consent,
-	})
-	if err != nil {
+
+	// Retry with delay — FP may take a moment to transition order from under_review to pending
+	var fpResp *structs.FPRedemptionDetailResponse
+	for attempt := 0; attempt < 3; attempt++ {
+		fpResp, err = FPConfirmRedemption(structs.FPRedemptionConfirmRequest{
+			ID:      redemptionID,
+			State:   "confirmed",
+			Consent: *consent,
+		})
+		if err == nil {
+			logMfEvent(uid, "redemption_confirmed", redemptionID, fpResp.Scheme, fpResp.Amount, fpResp.Units, map[string]interface{}{"state": fpResp.State})
+			return fpResp, nil
+		}
+		if strings.Contains(err.Error(), "not in pending state") && attempt < 2 {
+			log.Printf("[INFO] Redemption %s not yet in pending state, retrying in 2s (attempt %d)", redemptionID, attempt+1)
+			time.Sleep(2 * time.Second)
+			continue
+		}
 		return nil, err
 	}
-	logMfEvent(uid, "redemption_confirmed", redemptionID, fpResp.Scheme, fpResp.Amount, fpResp.Units, map[string]interface{}{"state": fpResp.State})
-	return fpResp, nil
+	return fpResp, err
 }
 
 func GetRedemptionDetail(uid, redemptionID string) (*structs.FPRedemptionDetailResponse, error) {
@@ -271,7 +366,60 @@ func ListRedemptions(fpData *structs.UserFPData) ([]structs.FPRedemptionDetailRe
 	if fpData.FpInvestmentAccountID == "" {
 		return []structs.FPRedemptionDetailResponse{}, nil
 	}
-	return FPListRedemptions(fpData.FpInvestmentAccountID)
+	redemptions, err := FPListRedemptions(fpData.FpInvestmentAccountID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enrich with scheme_name
+	schemeNames := map[string]string{}
+	for _, r := range redemptions {
+		if r.Scheme != "" {
+			schemeNames[r.Scheme] = ""
+		}
+	}
+	for isin := range schemeNames {
+		if scheme, err := FPGetFundScheme(isin); err == nil {
+			schemeNames[isin] = scheme.Name
+		}
+	}
+	for i := range redemptions {
+		if name := schemeNames[redemptions[i].Scheme]; name != "" {
+			redemptions[i].SchemeName = name
+		}
+	}
+	return redemptions, nil
+}
+
+// ---- Purchase Orders (lumpsum only) ----
+
+func ListPurchases(fpData *structs.UserFPData) ([]structs.FPOrderResponse, error) {
+	if fpData.FpInvestmentAccountID == "" {
+		return []structs.FPOrderResponse{}, nil
+	}
+	purchases, err := FPListPurchases(fpData.FpInvestmentAccountID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enrich with scheme_name
+	schemeNames := map[string]string{}
+	for _, p := range purchases {
+		if p.Scheme != "" {
+			schemeNames[p.Scheme] = ""
+		}
+	}
+	for isin := range schemeNames {
+		if scheme, err := FPGetFundScheme(isin); err == nil {
+			schemeNames[isin] = scheme.Name
+		}
+	}
+	for i := range purchases {
+		if name := schemeNames[purchases[i].Scheme]; name != "" {
+			purchases[i].SchemeName = name
+		}
+	}
+	return purchases, nil
 }
 
 // ---- Portfolio / Folios ----
@@ -280,7 +428,35 @@ func GetPortfolio(fpData *structs.UserFPData) (*structs.FPFolioListResponse, err
 	if fpData.FpInvestmentAccountID == "" {
 		return &structs.FPFolioListResponse{Data: []structs.FPFolio{}}, nil
 	}
-	return FPGetFolios(fpData.FpInvestmentAccountID)
+	resp, err := FPGetFolios(fpData.FpInvestmentAccountID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enrich folios with scheme_name and fund_category from payout_details ISINs
+	schemeCache := map[string]*structs.FPFundScheme{}
+	for _, folio := range resp.Data {
+		for _, pd := range folio.PayoutDetails {
+			if pd.Scheme != "" {
+				schemeCache[pd.Scheme] = nil
+			}
+		}
+	}
+	for isin := range schemeCache {
+		if scheme, err := FPGetFundScheme(isin); err == nil {
+			schemeCache[isin] = scheme
+		}
+	}
+	for i := range resp.Data {
+		if len(resp.Data[i].PayoutDetails) > 0 {
+			isin := resp.Data[i].PayoutDetails[0].Scheme
+			if scheme := schemeCache[isin]; scheme != nil {
+				resp.Data[i].SchemeName = scheme.Name
+				resp.Data[i].FundCategory = scheme.FundCategory
+			}
+		}
+	}
+	return resp, nil
 }
 
 func GetSchemeWiseReturns(fpData *structs.UserFPData) (json.RawMessage, error) {

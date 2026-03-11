@@ -29,6 +29,7 @@ func CreateMandate(uid string, fpData *structs.UserFPData, req structs.CreateMan
 		BankAccountID: bankAccount.OldID,
 		MandateType:   mandateType,
 		MandateLimit:  req.MandateLimit,
+		ProviderName:  "CYBRILLAPOA",
 	})
 	if err != nil {
 		return nil, err
@@ -41,9 +42,10 @@ func CreateMandate(uid string, fpData *structs.UserFPData, req structs.CreateMan
 }
 
 func AuthorizeMandate(uid string, mandateID int) (*structs.FPMandateAuthResponse, error) {
+	postbackURL := fmt.Sprintf("%s?mandate_id=%d&uid=%s", config.AppConfig.MandatePostbackURL, mandateID, uid)
 	fpResp, err := FPAuthorizeMandate(structs.FPMandateAuthRequest{
 		MandateID:          mandateID,
-		PaymentPostbackURL: config.AppConfig.MandatePostbackURL,
+		PaymentPostbackURL: postbackURL,
 	})
 	if err != nil {
 		return nil, err
