@@ -25,6 +25,21 @@ type UserFPData struct {
 	FpInvestmentAccountID string `firestore:"fp_investment_account_id" json:"fp_investment_account_id"`
 	OnboardingStep        int    `firestore:"onboarding_step" json:"onboarding_step"`
 	IsActivated           bool   `firestore:"is_activated" json:"is_activated"`
+	KycCompleted          bool   `firestore:"kyc_completed" json:"kyc_completed"`
+}
+
+// Prefill structs for address and bank (from third-party service)
+type AddressPrefill struct {
+	Line1   string `json:"line1,omitempty"`
+	Line2   string `json:"line2,omitempty"`
+	City    string `json:"city,omitempty"`
+	State   string `json:"state,omitempty"`
+	Pincode string `json:"pincode,omitempty"`
+}
+
+type BankPrefill struct {
+	AccountNumber string `json:"account_number,omitempty"`
+	IFSC          string `json:"ifsc,omitempty"`
 }
 
 // OnboardingStatusResponse combines Firestore FP data with pending pre-verification IDs from Postgres
@@ -32,6 +47,16 @@ type OnboardingStatusResponse struct {
 	UserFPData
 	PendingKYCPreVerifID  string `json:"pending_kyc_pre_verification_id,omitempty"`
 	PendingBankPreVerifID string `json:"pending_bank_pre_verification_id,omitempty"`
+	// Prefill from sure_user.users
+	Name        string `json:"name,omitempty"`
+	DateOfBirth string `json:"date_of_birth,omitempty"`
+	Gender      string `json:"gender,omitempty"`
+	Phone       string `json:"phone,omitempty"`
+	PAN         string `json:"pan,omitempty"`
+	Email       string `json:"email,omitempty"`
+	// Prefill from third-party service
+	Address *AddressPrefill `json:"address,omitempty"`
+	Bank    *BankPrefill    `json:"bank,omitempty"`
 }
 
 // KYC Check

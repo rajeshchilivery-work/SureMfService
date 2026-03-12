@@ -5,7 +5,9 @@ import (
 	"SureMFService/database/cloudsql/repository"
 	"SureMFService/database/firebase"
 	"SureMFService/structs"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 )
 
@@ -77,6 +79,12 @@ func deriveBankVerifStatus(pv *structs.FPPreVerification) string {
 }
 
 func KYCCheck(uid string) (*entity.PreVerificationUsage, error) {
+	// Return cached result if KYC already completed
+	fpData, _ := GetUserFPData(uid)
+	if fpData != nil && fpData.KycCompleted {
+		return &entity.PreVerificationUsage{Status: "completed"}, nil
+	}
+
 	user, err := repository.GetSureUserByUID(uid)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load user: %w", err)
@@ -116,10 +124,20 @@ func KYCCheck(uid string) (*entity.PreVerificationUsage, error) {
 		_ = repository.UpdatePreVerification(pv)
 	}
 
+	// Cache the result so we don't call FP again
+	if pv.Status == "completed" {
+		_ = saveUserFPFields(uid, map[string]interface{}{"kyc_completed": true})
+	}
+
 	return pv, nil
 }
 
 func CreateInvestorProfile(uid string, req structs.InvestorProfileRequest) (string, error) {
+	// Skip if already created
+	if fpData, _ := GetUserFPData(uid); fpData != nil && fpData.FpInvestorID != "" {
+		return fpData.FpInvestorID, nil
+	}
+
 	user, err := repository.GetSureUserByUID(uid)
 	if err != nil {
 		return "", fmt.Errorf("failed to load user: %w", err)
@@ -160,6 +178,11 @@ func CreateInvestorProfile(uid string, req structs.InvestorProfileRequest) (stri
 }
 
 func AddPhone(uid, investorID string) (string, error) {
+	// Skip if already added
+	if fpData, _ := GetUserFPData(uid); fpData != nil && fpData.FpPhoneID != "" {
+		return fpData.FpPhoneID, nil
+	}
+
 	user, err := repository.GetSureUserByUID(uid)
 	if err != nil {
 		return "", fmt.Errorf("failed to load user: %w", err)
@@ -179,6 +202,11 @@ func AddPhone(uid, investorID string) (string, error) {
 }
 
 func AddEmail(uid, investorID string) (string, error) {
+	// Skip if already added
+	if fpData, _ := GetUserFPData(uid); fpData != nil && fpData.FpEmailID != "" {
+		return fpData.FpEmailID, nil
+	}
+
 	user, err := repository.GetSureUserByUID(uid)
 	if err != nil {
 		return "", fmt.Errorf("failed to load user: %w", err)
@@ -197,6 +225,11 @@ func AddEmail(uid, investorID string) (string, error) {
 }
 
 func AddAddress(uid, investorID string, req structs.AddressRequest) (string, error) {
+	// Skip if already added
+	if fpData, _ := GetUserFPData(uid); fpData != nil && fpData.FpAddressID != "" {
+		return fpData.FpAddressID, nil
+	}
+
 	country := req.Country
 	if country == "" {
 		country = "IN"
@@ -228,6 +261,11 @@ func AddAddress(uid, investorID string, req structs.AddressRequest) (string, err
 // On success it registers the account with FP tenant and saves to Firestore.
 // Firestore is NOT updated if verification fails.
 func AddBankAccount(uid, investorID string, req structs.BankAccountRequest) (string, string, error) {
+	// Skip if already verified
+	if fpData, _ := GetUserFPData(uid); fpData != nil && fpData.FpBankAccountID != "" {
+		return "", fpData.FpBankAccountID, nil
+	}
+
 	user, err := repository.GetSureUserByUID(uid)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to load user: %w", err)
@@ -311,6 +349,11 @@ func AddBankAccount(uid, investorID string, req structs.BankAccountRequest) (str
 }
 
 func AddNominee(uid, investorID string, req structs.NomineeRequest) (string, error) {
+	// Skip if already added
+	if fpData, _ := GetUserFPData(uid); fpData != nil && fpData.FpNomineeID != "" {
+		return fpData.FpNomineeID, nil
+	}
+
 	fpReq := structs.FPNomineeRequest{
 		InvestorProfileID:            investorID,
 		Name:                         req.Name,
@@ -403,6 +446,54 @@ func ActivateAccount(uid string, fpData *structs.UserFPData, nomineeIdentityProo
 	return accountID, nil
 }
 
+const thirdPartyBaseURL = "http://34.93.109.233/sure-third-party"
+
+// fetchMFRequiredData calls the third-party service for address + bank prefill.
+func fetchMFRequiredData(uid string) (*structs.AddressPrefill, *structs.BankPrefill) {
+	resp, err := http.Get(fmt.Sprintf("%s/mf-required-data?uid=%s", thirdPartyBaseURL, uid))
+	if err != nil {
+		return nil, nil
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Data struct {
+			BankAc  string `json:"bankAc"`
+			IFSC    string `json:"ifsc"`
+			Address string `json:"address"`
+			Pincode int    `json:"pincode"`
+			City    string `json:"city"`
+			State   string `json:"state"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, nil
+	}
+
+	var addr *structs.AddressPrefill
+	if result.Data.Address != "" || result.Data.City != "" {
+		addr = &structs.AddressPrefill{
+			Line1:   result.Data.Address,
+			City:    result.Data.City,
+			State:   result.Data.State,
+			Pincode: fmt.Sprintf("%d", result.Data.Pincode),
+		}
+		if addr.Pincode == "0" {
+			addr.Pincode = ""
+		}
+	}
+
+	var bank *structs.BankPrefill
+	if result.Data.BankAc != "" {
+		bank = &structs.BankPrefill{
+			AccountNumber: result.Data.BankAc,
+			IFSC:          result.Data.IFSC,
+		}
+	}
+
+	return addr, bank
+}
+
 func GetOnboardingStatus(uid string) (*structs.OnboardingStatusResponse, error) {
 	fpData, err := GetUserFPData(uid)
 	if err != nil {
@@ -417,6 +508,23 @@ func GetOnboardingStatus(uid string) (*structs.OnboardingStatusResponse, error) 
 	if bankPV, err := repository.GetLatestPreVerificationByUUIDAndType(uid, "bank_account_verification"); err == nil && bankPV.Status == "pending" && bankPV.FpPreVerificationID != nil {
 		resp.PendingBankPreVerifID = *bankPV.FpPreVerificationID
 	}
+
+	// Prefill user data from postgres (best-effort, don't fail if user not found)
+	if user, err := repository.GetSureUserByUID(uid); err == nil {
+		resp.Name = user.Name
+		if !user.DOB.IsZero() {
+			resp.DateOfBirth = user.DOB.Format("2006-01-02")
+		}
+		resp.Gender = displayGender(user.Gender)
+		resp.Phone = user.PhoneNumber
+		resp.PAN = user.PAN
+		if user.HasGmailAccess {
+			resp.Email = user.Email
+		}
+	}
+
+	// Prefill address + bank from third-party service (best-effort)
+	resp.Address, resp.Bank = fetchMFRequiredData(uid)
 
 	return resp, nil
 }
@@ -462,5 +570,17 @@ func normGender(g string) string {
 		return "female"
 	default:
 		return "transgender"
+	}
+}
+
+// displayGender maps Postgres gender values to frontend display values: Male | Female | Other
+func displayGender(g string) string {
+	switch g {
+	case "M", "m", "male", "Male":
+		return "Male"
+	case "F", "f", "female", "Female":
+		return "Female"
+	default:
+		return "Other"
 	}
 }

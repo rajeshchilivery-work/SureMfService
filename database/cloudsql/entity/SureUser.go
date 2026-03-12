@@ -11,7 +11,8 @@ type SureUser struct {
 	PAN         string    `gorm:"column:pan"`
 	DOB         time.Time `gorm:"column:dob"`
 	Email       string    `gorm:"column:email"`
-	Gender      string    `gorm:"column:gender"`
+	Gender         string    `gorm:"column:gender"`
+	HasGmailAccess bool      `gorm:"column:has_gmail_access"`
 }
 
 func (SureUser) TableName() string {
