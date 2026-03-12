@@ -134,7 +134,7 @@ func GetUserOrders(fpData *structs.UserFPData) ([]json.RawMessage, error) {
 }
 
 func UpdatePurchaseConsent(uid, purchaseID string, fpData *structs.UserFPData) (*structs.FPOrderResponse, error) {
-	consent, err := getConsentData(fpData)
+	consent, err := getConsentData(uid)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get consent data: %w", err)
 	}
@@ -239,7 +239,7 @@ func GetHoldings(fpData *structs.UserFPData) (json.RawMessage, error) {
 // ---- SIP Lifecycle ----
 
 func ConfirmSIP(uid, sipID string, fpData *structs.UserFPData) (*structs.FPSIPDetailResponse, error) {
-	consent, err := getConsentData(fpData)
+	consent, err := getConsentData(uid)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get consent data: %w", err)
 	}
@@ -321,7 +321,7 @@ func ListSIPs(fpData *structs.UserFPData) ([]structs.FPSIPDetailResponse, error)
 // ---- Redemption Lifecycle ----
 
 func ConfirmRedemption(uid, redemptionID string, fpData *structs.UserFPData) (*structs.FPRedemptionDetailResponse, error) {
-	consent, err := getConsentData(fpData)
+	consent, err := getConsentData(uid)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get consent data: %w", err)
 	}
@@ -483,22 +483,18 @@ func GetInvestmentAccountReturns(fpData *structs.UserFPData) (json.RawMessage, e
 
 // ---- Internal helpers ----
 
-func getConsentData(fpData *structs.UserFPData) (*structs.FPConsentDetail, error) {
-	if fpData.FpPhoneID == "" || fpData.FpEmailID == "" {
-		return nil, fmt.Errorf("user missing phone or email ID")
-	}
-	phone, err := FPGetPhone(fpData.FpPhoneID)
+func getConsentData(uid string) (*structs.FPConsentDetail, error) {
+	user, err := repository.GetSureUserByUID(uid)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch phone: %w", err)
+		return nil, fmt.Errorf("failed to load user: %w", err)
 	}
-	email, err := FPGetEmail(fpData.FpEmailID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch email: %w", err)
+	if user.PhoneNumber == "" || user.Email == "" {
+		return nil, fmt.Errorf("user missing phone or email")
 	}
 	return &structs.FPConsentDetail{
-		Email:   email.Email,
+		Email:   user.Email,
 		ISDCode: "91",
-		Mobile:  phone.Number,
+		Mobile:  user.PhoneNumber,
 	}, nil
 }
 

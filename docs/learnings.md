@@ -131,13 +131,13 @@ These show the raw FP response before the service processes it — essential for
 
 ## 11. Auto-Consent Pattern
 
-Consent data (email/phone) is **not** sent by the frontend. The backend auto-fetches it:
-1. Read `fp_phone_id` and `fp_email_id` from Firestore `user_fp_mapping/{uid}`
-2. Call `FPGetPhone(fp_phone_id)` → get phone number
-3. Call `FPGetEmail(fp_email_id)` → get email address
-4. Include in consent: `{ email, isd_code: "91", mobile }`
+Consent data (email/phone) is **not** sent by the frontend. The backend auto-fetches it from PostgreSQL `sure_user.users` via `repository.GetSureUserByUID(uid)`:
+1. Read `PhoneNumber` and `Email` from PostgreSQL `sure_user.users` (WHERE uuid=?)
+2. Include in consent: `{ email, isd_code: "91", mobile }`
 
 This applies to `UpdatePurchaseConsent`, `ConfirmSIP`, and `ConfirmRedemption`.
+
+> **Previously** this used two FP API calls (`FPGetPhone` + `FPGetEmail`) to fetch phone/email from FP using stored `fp_phone_id` and `fp_email_id`. Changed to read directly from PostgreSQL since the values are identical (set once during onboarding and never change).
 
 ---
 

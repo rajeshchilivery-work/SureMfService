@@ -337,7 +337,7 @@ No request body.
 ---
 
 ### `PATCH /:id/consent`
-No request body. Email and phone auto-fetched from FP.
+No request body. Email and phone auto-fetched from PostgreSQL `sure_user.users`.
 
 **FP API:** `PATCH /v2/mf_purchases`
 ```json
@@ -450,7 +450,7 @@ Poll purchase status. No request body.
 ---
 
 ### `PATCH /sips/:id/confirm`
-No request body. Auto-consent with email + phone.
+No request body. Auto-consent with email + phone (from PostgreSQL `sure_user.users`).
 
 **FP API:** `PATCH /v2/mf_purchase_plans`
 ```json
@@ -547,7 +547,7 @@ Get SIP detail. No request body.
 ---
 
 ### `PATCH /redemptions/:id/confirm`
-No request body. Auto-consent with email + phone.
+No request body. Auto-consent with email + phone (from PostgreSQL `sure_user.users`).
 
 **FP API:** `PATCH /v2/mf_redemptions`
 ```json

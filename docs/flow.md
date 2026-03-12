@@ -331,7 +331,7 @@ Creates and configures the MF investment account.
 
 ### Step 2: `PATCH /:uid/orders/:id/consent`
 
-No request body required. Email and phone are auto-fetched from FP using stored `fp_phone_id` and `fp_email_id`.
+No request body required. Email and phone are auto-fetched from PostgreSQL `sure_user.users`.
 
 **FP API:** `PATCH /v2/mf_purchases` with `id`, `consent: {email, isd_code: "91", mobile}`
 
@@ -424,7 +424,7 @@ View holdings after settlement (T+1 or T+2). No params needed — investment acc
 
 ### `PATCH /:uid/orders/sips/:id/confirm` — Confirm SIP
 
-No request body required. Email and phone are auto-fetched from FP using stored `fp_phone_id` and `fp_email_id`.
+No request body required. Email and phone are auto-fetched from PostgreSQL `sure_user.users`.
 
 **FP API:** `PATCH /v2/mf_purchase_plans` with `id`, `state: "confirmed"`, `consent: {email, isd_code: "91", mobile}`
 
@@ -511,7 +511,7 @@ No request body required. Email and phone are auto-fetched from FP using stored 
 
 ### `PATCH /:uid/orders/redemptions/:id/confirm` — Confirm Redemption
 
-No request body required. Email and phone are auto-fetched from FP using stored `fp_phone_id` and `fp_email_id`.
+No request body required. Email and phone are auto-fetched from PostgreSQL `sure_user.users`.
 
 > Has retry loop (3x with 2s delay) if FP order is still in `under_review` state.
 
@@ -797,10 +797,10 @@ Every transaction lifecycle is logged to `sure_mf.mf_events` across 4 phases:
 
 | # | Operation | Store | Details |
 |---|-----------|-------|---------|
-| 1 | FP API | — | `GET /v2/phone_numbers/{fp_phone_id}` + `GET /v2/email_addresses/{fp_email_id}` (auto-consent) |
+| 1 | **Read** | PG `sure_user.users` | Fetch PhoneNumber + Email (`WHERE uuid=?`) |
 | 2 | FP API | — | `PATCH /v2/mf_purchases` (consent with email + mobile) |
 
-> No DB write. Phone/email IDs come from `fpData` (Firestore) passed by controller.
+> No DB write. Phone/email read from PostgreSQL `sure_user.users`.
 
 #### `POST /orders/:id/payment`
 
@@ -852,7 +852,7 @@ Every transaction lifecycle is logged to `sure_mf.mf_events` across 4 phases:
 
 | # | Operation | Store | Details |
 |---|-----------|-------|---------|
-| 1 | FP API | — | Auto-consent: `GET /v2/phone_numbers` + `GET /v2/email_addresses` |
+| 1 | **Read** | PG `sure_user.users` | Fetch PhoneNumber + Email (`WHERE uuid=?`) |
 | 2 | FP API | — | `PATCH /v2/mf_purchase_plans` (`state='confirmed'` + consent) |
 | 3 | **Create** | PG `sure_mf.mf_events` | `event_type='sip_confirmed', isin, amount, raw_payload={state}` |
 
@@ -890,7 +890,7 @@ Every transaction lifecycle is logged to `sure_mf.mf_events` across 4 phases:
 
 | # | Operation | Store | Details |
 |---|-----------|-------|---------|
-| 1 | FP API | — | Auto-consent: `GET /v2/phone_numbers` + `GET /v2/email_addresses` |
+| 1 | **Read** | PG `sure_user.users` | Fetch PhoneNumber + Email (`WHERE uuid=?`) |
 | 2 | FP API | — | `PATCH /v2/mf_redemptions` (`state='confirmed'` + consent) |
 | 3 | **Create** | PG `sure_mf.mf_events` | `event_type='redemption_confirmed', isin, amount, units, raw_payload={state}` |
 
@@ -1006,7 +1006,7 @@ Service: Firestore WRITE user_fp_mapping/{uid} (onboarding steps only)
 ### Lumpsum Purchase
 ```
 1. POST /orders/purchase        -> create order (state: under_review → pending after ~1-3s)
-2. PATCH /orders/:id/consent    -> update consent (auto-fetches email/phone from FP)
+2. PATCH /orders/:id/consent    -> update consent (auto-fetches email/phone from PostgreSQL)
                                    ⚠ Has retry loop: FP may still be in under_review state
                                    Retries 3x with 2s delay if "not in pending state"
 3. POST /orders/:id/payment     -> create payment (get token_url)

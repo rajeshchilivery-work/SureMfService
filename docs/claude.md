@@ -204,8 +204,8 @@ Base: `https://s.finprim.com`
 | `FPGetSchemeWiseReturns` | POST | `/v2/transactions/reports/scheme_wise_returns` | Body: `{mf_investment_account}` |
 | `FPGetInvestmentAccountReturns` | POST | `/v2/transactions/reports/investment_account_wise_returns` | Body: `{mf_investment_account}` |
 | `FPGetBankAccount` | GET | `/v2/bank_accounts/{id}` | Fetches `old_id` for payments |
-| `FPGetPhone` | GET | `/v2/phone_numbers/{id}` | Auto-consent: fetch phone number |
-| `FPGetEmail` | GET | `/v2/email_addresses/{id}` | Auto-consent: fetch email |
+| `FPGetPhone` | GET | `/v2/phone_numbers/{id}` | Fetch phone number (used during onboarding) |
+| `FPGetEmail` | GET | `/v2/email_addresses/{id}` | Fetch email (used during onboarding) |
 | `FPGetMFInvestmentAccount` | GET | `/v2/mf_investment_accounts/{id}` | Fetch account details |
 | `FPCancelSIP` | POST | `/v2/mf_purchase_plans/cancel` | Body: `{id, cancellation_code}` |
 | `FPGetMandate` | GET | `/api/pg/mandates/{id}` | Single mandate status |
@@ -401,7 +401,7 @@ List endpoints (`GetUserOrders`, `ListSIPs`, `ListRedemptions`, `ListPurchases`,
 
 ### Auto-consent
 
-`getConsentData(fpData)` fetches email and phone from FP using stored `fp_phone_id` and `fp_email_id` via `FPGetPhone` and `FPGetEmail`. Used by `UpdatePurchaseConsent`, `ConfirmSIP`, and `ConfirmRedemption` — no email/mobile needed in request body.
+`getConsentData(uid)` reads email and phone directly from PostgreSQL `sure_user.users` via `repository.GetSureUserByUID(uid)`. Used by `UpdatePurchaseConsent`, `ConfirmSIP`, and `ConfirmRedemption` — no email/mobile needed in request body. This avoids two unnecessary FP API calls per consent operation since the values are identical to what was pushed to FP during onboarding.
 
 ### Firebase helpers
 

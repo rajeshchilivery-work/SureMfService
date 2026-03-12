@@ -19,7 +19,7 @@ Backend service for SureInvest's mutual fund onboarding and investment platform.
 11. **Mandates** — create, authorize, list, status check, cancel eNACH/UPI autopay mandates
 12. **Fund browsing** — list MF schemes with filtering, get fund details by ISIN
 13. **Event audit trail** — comprehensive mf_events logging across 4 lifecycle phases (created, confirmed, completed, cancelled) with terminal event deduplication
-14. **Auto-consent** — consent data (email/phone) auto-fetched from FP during confirm flows
+14. **Auto-consent** — consent data (email/phone) auto-fetched from PostgreSQL during confirm flows
 15. **Scheme name enrichment** — orders, SIPs, redemptions, and portfolio responses enriched with fund scheme names
 16. **CORS middleware** — cross-origin request support for frontend integration
 17. **Audit logging** — all requests/responses logged and published to audit queue
